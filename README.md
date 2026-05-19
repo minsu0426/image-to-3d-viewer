@@ -24,3 +24,35 @@ Segmentation Phase (SAM 2): 지정된 좌표를 기반으로 객체의 마스크
 Reconstruction Phase (TripoSR): 추출된 이미지를 3D 생성 모델에 전달하여 깊이(Depth) 및 기하학적 구조를 추정한 후 3D 메쉬 데이터를 생성.
 
 Rendering Phase: 생성된 메쉬 파일을 Three.js 또는 PyVista 엔진을 통해 웹 화면에 실시간으로 시각화 및 배치.
+
+## 📜 출처 및 오픈소스 크레딧 (Acknowledgments & References)
+
+본 텀프로젝트는 컴퓨터 비전 분야의 최신 오픈소스 파운데이션 모델들을 기반으로 시스템 통합을 수행한 연구 및 개발 결과물입니다. 핵심 파이프라인 구현을 위해 아래의 훌륭한 오픈소스 프로젝트와 연구 자산을 활용 및 참조하였습니다.
+
+### 1. 사용 오픈소스 라이브러리 및 모델
+- **SAM 2 (Segment Anything Model 2)**: Meta AI에서 개발한 Zero-shot 인스턴스 세그멘테이션 모델을 활용하여 이미지 내 2D 객체 추출 및 배경 제거(RGBA 변환) 파이프라인을 구축하였습니다.
+  - Repository: [facebookresearch/sam2](https://github.com/facebookresearch/sam2)
+- **TripoSR**: VAST-AI Research와 Stability AI에서 공동 개발한 단일 이미지 기반 초고속 3D Reconstruction 모델을 활용하여 2D 객체의 3D 메쉬(.obj) 복원을 수행하였습니다.
+  - Repository: [VAST-AI-Research/TripoSR](https://github.com/VAST-AI-Research/TripoSR)
+- **Three.js**: 웹 브라우저 환경에서 별도의 플러그인 없이 고성능 3D 그래픽을 렌더링하기 위해 Three.js(r128) 라이브러리를 임베딩하여 인터랙티브 가상 쇼룸을 구현하였습니다.
+
+### 2. 연구 인용 (BibTeX)
+
+```bibtex
+@article{ravi2024sam2,
+  title={SAM 2: Segment Anything in Images and Videos},
+  author={Ravi, Nikhila and Grigorev, Valentin and Karyakin, Karttikeya and others},
+  journal={arXiv preprint arXiv:2408.00714},
+  year={2024}
+}
+
+@article{tochilkin2024triposr,
+  title={TripoSR: Fast 3D Object Reconstruction from a Single Image},
+  author={Tochilkin, Dmitry and Panchenko, Maxim and Sanyal, Soubhik and others},
+  journal={arXiv preprint arXiv:2403.02151},
+  year={2024}
+}
+
+#$💡 실행 안내
+AI 모델 가중치 파일은 용량 문제로 GitHub에 포함되어 있지 않습니다. 
+하지만 코드를 최초 실행할 때 `app.py`가 알아서 모델 파일을 다운로드하여 `checkpoints/` 폴더에 저장하므로, 별도의 설정 없이 바로 실행하시면 됩니다!
