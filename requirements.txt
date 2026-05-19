@@ -2,3 +2,5 @@ streamlit
 opencv-python
 numpy
 Pillow
+tsr
+huggingface_hub
