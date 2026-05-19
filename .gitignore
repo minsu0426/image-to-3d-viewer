@@ -1,0 +1,10 @@
+# AI 모델 가중치 폴더 무시
+checkpoints/
+
+# 나중에 만들어질 3D 메쉬 출력물 폴더 무시
+outputs/
+
+# 파이썬 찌꺼기 파일들 무시
+__pycache__/
+*.pyc
+.env
