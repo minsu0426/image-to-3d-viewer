@@ -16,6 +16,7 @@ huggingface_hub
 imageio
 rembg
 onnxruntime
+scikit-image
 
 # --- SAM 2 라이브러리 (Git 직접 설치) ---
 git+https://github.com/facebookresearch/sam2.git

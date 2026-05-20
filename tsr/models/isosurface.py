@@ -4,12 +4,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-# torchmcubes가 없으면 기본 trimesh 모듈을 쓰도록 우회 세팅
 try:
     import torchmcubes
     HAS_TORCHMCUBES = True
 except ImportError:
-    import trimesh
+    import skimage.measure
     HAS_TORCHMCUBES = False
 
 
@@ -56,11 +55,10 @@ class MarchingCubeHelper(IsosurfaceHelper):
                 print("torchmcubes was not compiled with CUDA support, use CPU version instead.")
                 v_pos, t_pos_idx = torchmcubes.marching_cubes(level.detach().cpu(), 0.0)
         else:
-            # 파이썬 3.13 우회 연산 (trimesh 사용)
             level_np = level.detach().cpu().numpy()
-            verts, faces = trimesh.isosurface.marching_cubes(level_np, level=0.0)
             
-            # 파이토치 텐서로 재변환
+            verts, faces, _, _ = skimage.measure.marching_cubes(level_np, level=0.0)
+            
             v_pos = torch.from_numpy(verts.astype(np.float32)).to(level.device)
             t_pos_idx = torch.from_numpy(faces.astype(np.int64)).to(level.device)
 
