@@ -1,10 +1,21 @@
+# --- 기본 UI / 유틸 ---
 streamlit
 opencv-python
 numpy
 Pillow
+
+# --- AI 모델 및 연산 ---
 torch
 torchvision
-trimesh
 einops
-huggingface_hub
 omegaconf
+
+# --- 3D 메쉬 및 다운로드 ---
+trimesh
+huggingface_hub
+imageio
+rembg
+onnxruntime
+
+# --- SAM 2 라이브러리 (Git 직접 설치) ---
+git+https://github.com/facebookresearch/sam2.git

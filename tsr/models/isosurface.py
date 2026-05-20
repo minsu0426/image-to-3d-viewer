@@ -3,6 +3,8 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+
+# torchmcubes가 없으면 기본 trimesh 모듈을 쓰도록 우회 세팅
 try:
     import torchmcubes
     HAS_TORCHMCUBES = True
@@ -23,7 +25,6 @@ class MarchingCubeHelper(IsosurfaceHelper):
     def __init__(self, resolution: int) -> None:
         super().__init__()
         self.resolution = resolution
-        self.mc_func: Callable = marching_cubes
         self._grid_vertices: Optional[torch.FloatTensor] = None
 
     @property
@@ -48,7 +49,6 @@ class MarchingCubeHelper(IsosurfaceHelper):
     ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
         level = -level.view(self.resolution, self.resolution, self.resolution)
         
-        # 💡 [핵심 수정] torchmcubes 유무에 따른 분기 처리
         if HAS_TORCHMCUBES:
             try:
                 v_pos, t_pos_idx = torchmcubes.marching_cubes(level.detach(), 0.0)
@@ -56,13 +56,11 @@ class MarchingCubeHelper(IsosurfaceHelper):
                 print("torchmcubes was not compiled with CUDA support, use CPU version instead.")
                 v_pos, t_pos_idx = torchmcubes.marching_cubes(level.detach().cpu(), 0.0)
         else:
-            # 파이썬 3.13 환경 등 torchmcubes가 없을 때 trimesh로 안전하게 우회 연산
+            # 파이썬 3.13 우회 연산 (trimesh 사용)
             level_np = level.detach().cpu().numpy()
-            
-            # Pure Python marching cubes 연산 실행
             verts, faces = trimesh.isosurface.marching_cubes(level_np, level=0.0)
             
-            # 연산 결과를 다시 PyTorch 텐서로 변환 파이프라인에 맞춰줌
+            # 파이토치 텐서로 재변환
             v_pos = torch.from_numpy(verts.astype(np.float32)).to(level.device)
             t_pos_idx = torch.from_numpy(faces.astype(np.int64)).to(level.device)
 

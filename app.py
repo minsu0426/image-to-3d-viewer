@@ -97,16 +97,9 @@ def load_triposr_model():
 # 3D 변환 실행 함수
 # =========================================================
 
-def run_triposr_inference(rgba_array: np.ndarray) -> str:
+def run_triposr_inference(input_data) -> str:
     """
-    RGBA numpy 배열을 받아 TripoSR로 3D 메쉬를 생성하고
-    .obj 파일 경로를 반환합니다.
-
-    Args:
-        rgba_array: (H, W, 4) uint8 RGBA numpy 배열
-
-    Returns:
-        저장된 .obj 파일의 절대 경로 문자열
+    이미지 데이터를 받아 TripoSR로 3D 메쉬를 생성하고 .obj 파일 경로를 반환합니다.
     """
     model, device = load_triposr_model()
 
@@ -114,8 +107,11 @@ def run_triposr_inference(rgba_array: np.ndarray) -> str:
     output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
     os.makedirs(output_dir, exist_ok=True)
 
-    # numpy RGBA → PIL RGBA 변환
-    pil_image = Image.fromarray(rgba_array, mode="RGBA")
+    # 전달받은 데이터가 이미 PIL Image인지, 순수 배열인지 확인하고 처리합니다.
+    if isinstance(input_data, Image.Image):
+        pil_image = input_data
+    else:
+        pil_image = Image.fromarray(input_data, mode="RGBA")
 
     # TripoSR 전처리: 512×512 리사이즈 후 배경을 흰색으로 합성
     pil_image = pil_image.resize((512, 512), Image.LANCZOS)
@@ -123,12 +119,11 @@ def run_triposr_inference(rgba_array: np.ndarray) -> str:
     background.paste(pil_image, mask=pil_image.split()[3])  # alpha 채널을 마스크로 사용
     input_image = background.convert("RGB")
 
-    # TripoSR 추론
     with torch.no_grad():
         scene_codes = model([input_image], device=device)
 
-    # 메쉬 추출 (marching cubes 해상도: 256)
-    meshes = model.extract_mesh(scene_codes, resolution=256)
+    # 메쉬 추출 (marching cubes 해상도: 128)
+    meshes = model.extract_mesh(scene_codes, has_vertex_color=True, resolution=128)
     mesh = meshes[0]
 
     # .obj 파일 저장
@@ -470,21 +465,36 @@ if uploaded_file is not None:
                 predictor.set_image(img_rgb)
 
                 h, w, _ = img_rgb.shape
-                center_point = np.array([[w // 2, h // 2]])
-                input_label  = np.array([1])
+                
+                # 💡 [해결 포인트] 점(Point) 대신 박스(Box) 프롬프트 사용
+                # 캔이 중앙에 있으므로 이미지 상하좌우 15%~85% 영역에 가상의 네모 박스를 칩니다.
+                # 에러 방지를 위해 반드시 정수(int)로 변환해야 합니다.
+                input_box = np.array([[
+                    int(w * 0.15), 
+                    int(h * 0.15), 
+                    int(w * 0.85), 
+                    int(h * 0.85)
+                ]])
 
+                # predict 함수에 점 대신 박스 좌표를 넣습니다.
                 masks, scores, logits = predictor.predict(
-                    point_coords=center_point,
-                    point_labels=input_label,
+                    point_coords=None,
+                    point_labels=None,
+                    box=input_box,
                     multimask_output=False,
                 )
 
-                mask = masks[0]
+                # 마스크 처리 및 RGBA 변환
+                mask_2d = masks.squeeze()
                 img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
                 img_rgba[:, :, :3] = img_rgb
-                img_rgba[:, :, 3]  = mask * 255
+                
+                # 배경은 투명(0), 객체는 불투명(255)으로 설정
+                img_rgba[:, :, 3] = (mask_2d > 0).astype(np.uint8) * 255
 
-                st.session_state.extracted_image = img_rgba
+                # Streamlit 렌더링 에러 방지를 위해 PIL Image 객체로 변환하여 저장
+                final_pil_image = Image.fromarray(img_rgba, "RGBA")
+                st.session_state.extracted_image = final_pil_image
                 st.session_state.sam2_done = True
 
         st.success("✅ 객체 추출 완료!")
