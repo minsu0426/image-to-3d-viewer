@@ -218,7 +218,7 @@ def render_3d_viewer(obj_path: str):
 </div>
 
 <!-- Three.js r128 CDN -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 
 <script>
 // ── Base64 디코딩 ──────────────────────────────────────────
@@ -426,7 +426,7 @@ window.addEventListener('resize', () => {{
 </body>
 </html>
 """
-    components.html(html_code, height=500)
+    components.html(html_code, height=520, scrolling=False)
 
 
 # =========================================================
