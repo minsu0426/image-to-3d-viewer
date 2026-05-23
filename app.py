@@ -7,6 +7,8 @@ import torch
 import os
 import urllib.request
 import base64
+import psutil
+import gc
 
 # SAM 2 라이브러리
 from sam2.build_sam import build_sam2
@@ -94,7 +96,40 @@ def load_triposr_model():
 
 
 # =========================================================
-# 3D 변환 실행 함수
+# RAM 기반 자동 프리셋 선택
+# =========================================================
+
+def get_inference_preset():
+    """
+    사용 가능한 RAM을 기준으로 안전한 resolution과 chunk_size를 반환.
+    available 메모리에서 안전 마진 1.5GB 빼고 계산.
+    """
+    vm = psutil.virtual_memory()
+    available_gb = vm.available / (1024 ** 3)
+    total_gb = vm.total / (1024 ** 3)
+
+    # 안전 마진 확보 (OS / 브라우저 / Streamlit 자체)
+    usable_gb = max(0.5, available_gb - 1.5)
+
+    if usable_gb < 2.5:
+        preset = {"resolution": 32, "chunk_size": 1024, "tier": "Minimal"}
+    elif usable_gb < 6:
+        preset = {"resolution": 64, "chunk_size": 4096, "tier": "Low"}
+    elif usable_gb < 14:
+        preset = {"resolution": 128, "chunk_size": 16384, "tier": "Medium"}
+    elif usable_gb < 30:
+        preset = {"resolution": 192, "chunk_size": 65536, "tier": "High"}
+    else:
+        preset = {"resolution": 256, "chunk_size": 131072, "tier": "Ultra"}
+
+    preset["available_gb"] = available_gb
+    preset["total_gb"] = total_gb
+    preset["usable_gb"] = usable_gb
+    return preset
+
+
+# =========================================================
+# 3D 변환 실행 함수 (자동 프리셋 + 단계별 메모리 해제 + 폴백)
 # =========================================================
 
 def run_triposr_inference(input_data) -> str:
@@ -104,6 +139,17 @@ def run_triposr_inference(input_data) -> str:
     output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
     os.makedirs(output_dir, exist_ok=True)
 
+    # ───── 1. 환경 분석 및 프리셋 선택 ─────
+    preset = get_inference_preset()
+    st.info(
+        f"🖥️ **자동 환경 분석**\n\n"
+        f"- 총 RAM: `{preset['total_gb']:.1f} GB`\n"
+        f"- 가용 RAM: `{preset['available_gb']:.1f} GB`\n"
+        f"- 선택된 프리셋: **{preset['tier']}** "
+        f"(resolution=`{preset['resolution']}`, chunk_size=`{preset['chunk_size']}`)"
+    )
+
+    # ───── 2. 이미지 전처리 ─────
     if isinstance(input_data, Image.Image):
         pil_image = input_data
     else:
@@ -114,23 +160,62 @@ def run_triposr_inference(input_data) -> str:
     background.paste(pil_image, mask=pil_image.split()[3])
     input_image = background.convert("RGB")
 
-    # ① 추론 전 GPU/CPU 캐시 비우기
+    # ───── 3. 추론 전 메모리 정리 ─────
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    # ───── 4. Scene codes 추출 ─────
     with torch.no_grad():
-        # ② chunk_size를 작게 줘서 한 번에 처리하는 양 줄이기
-        model.renderer.set_chunk_size(8192)  # 기존 131072 → 8192
+        model.renderer.set_chunk_size(preset["chunk_size"])
         scene_codes = model([input_image], device=device)
 
-    # ③ resolution 32로 최소화
-    meshes = model.extract_mesh(scene_codes, has_vertex_color=True, resolution=32)
-    mesh = meshes[0]
-
-    # 추론 후 캐시 정리
+    # 더 이상 안 쓰는 변수 즉시 해제
+    del input_image, background, pil_image
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    # ───── 5. Mesh 추출 (chunk_size를 더 작게 강제) ─────
+    # extract_mesh는 resolution³ 만큼의 포인트를 처리하므로
+    # 더 보수적인 chunk_size로 한 번 더 조임
+    mesh_chunk = max(512, preset["chunk_size"] // 4)
+    model.renderer.set_chunk_size(mesh_chunk)
+
+    # 저메모리 환경에서는 vertex color 끔 (RAM 30~40% 추가 절약)
+    use_vertex_color = preset["tier"] not in ("Minimal", "Low")
+
+    try:
+        meshes = model.extract_mesh(
+            scene_codes,
+            has_vertex_color=use_vertex_color,
+            resolution=preset["resolution"],
+        )
+    except (MemoryError, RuntimeError) as e:
+        # 그래도 OOM 나면 더 낮춰서 재시도
+        st.warning(f"⚠️ 메모리 부족 감지. 더 낮은 해상도로 재시도합니다... ({e})")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        fallback_res = max(32, preset["resolution"] // 2)
+        model.renderer.set_chunk_size(512)
+        meshes = model.extract_mesh(
+            scene_codes,
+            has_vertex_color=False,
+            resolution=fallback_res,
+        )
+        st.info(f"✅ 폴백 모드로 메쉬 생성 완료 (resolution=`{fallback_res}`)")
+
+    mesh = meshes[0]
+
+    # ───── 6. 최종 정리 ─────
+    del scene_codes, meshes
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # ───── 7. 저장 ─────
     timestamp = int(time.time())
     obj_filename = f"mesh_{timestamp}.obj"
     obj_path = os.path.normpath(os.path.join(output_dir, obj_filename))
@@ -296,6 +381,25 @@ window.addEventListener('resize',()=>{{
 # Streamlit UI
 # =========================================================
 
+# --- 사이드바: 시스템 상태 ---
+with st.sidebar:
+    st.subheader("🖥️ 시스템 상태")
+    _vm = psutil.virtual_memory()
+    st.metric("총 RAM", f"{_vm.total / 1e9:.1f} GB")
+    st.metric(
+        "가용 RAM",
+        f"{_vm.available / 1e9:.1f} GB",
+        delta=f"{_vm.percent}% 사용 중",
+        delta_color="inverse",
+    )
+    _preset = get_inference_preset()
+    st.caption(f"예상 프리셋: **{_preset['tier']}**")
+    st.caption(
+        f"resolution=`{_preset['resolution']}`, "
+        f"chunk_size=`{_preset['chunk_size']}`"
+    )
+    st.caption("💡 가용 RAM이 적으면 브라우저/IDE를 닫고 새로고침하세요.")
+
 st.title("🧊 Image to 3D Viewer")
 st.write("2D 이미지를 업로드하면 SAM 2로 객체를 추출하고 TripoSR을 통해 3D 모델로 변환합니다.")
 
@@ -356,7 +460,7 @@ if uploaded_file is not None:
                 with st.spinner("TripoSR 모델을 로드하는 중입니다..."):
                     load_triposr_model()
 
-                with st.spinner("🔄 3D 메쉬를 생성하는 중입니다... (약 30초~2분 소요)"):
+                with st.spinner("🔄 3D 메쉬를 생성하는 중입니다... (환경에 따라 30초~5분 소요)"):
                     mesh_path = run_triposr_inference(st.session_state.extracted_image)
 
                 with st.spinner("🖼️ 뷰어 HTML을 생성하는 중입니다..."):
