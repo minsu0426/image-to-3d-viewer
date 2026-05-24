@@ -8,3 +8,6 @@ outputs/
 __pycache__/
 *.pyc
 .env
+
+echo venv/ >> .gitignore
+venv/ 
