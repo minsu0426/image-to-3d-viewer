@@ -1,22 +1,24 @@
-# --- 기본 UI / 유틸 ---
+# --- UI ---
 streamlit
 opencv-python
 numpy
 Pillow
+psutil
 
-# --- AI 모델 및 연산 ---
+# --- AI model computation ---
 torch
 torchvision
 einops
 omegaconf
 
-# --- 3D 메쉬 및 다운로드 ---
+# --- 3D mesh ---
 trimesh
 huggingface_hub
+
+# --- SAM 2 library ---
+git+https://github.com/facebookresearch/sam2.git
+
+# --- TRELLIS library ---
 imageio
 rembg
-onnxruntime
-scikit-image
-
-# --- SAM 2 라이브러리 (Git 직접 설치) ---
-git+https://github.com/facebookresearch/sam2.git
+xformers
