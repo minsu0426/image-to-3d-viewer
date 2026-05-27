@@ -31,7 +31,7 @@ def _init(key, val):
 
 _init("mode", None)            
 _init("sam2_done", False)
-_init("trellis_done", False)   # TripoSR -> Trellis로 명칭 변경
+_init("trellis_done", False) 
 _init("modeb_done", False)
 _init("extracted_image", None) 
 _init("mesh_path", None)
@@ -65,8 +65,6 @@ def load_sam2_model():
     model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
     model = build_sam2(model_cfg, sam2_checkpoint, device=device)
     return SAM2ImagePredictor(model), device
-
-# 💡 TripoSR 로드 함수는 완전히 삭제되었습니다!
 
 # =========================================================
 # 3. Dynamic Environment Preset
@@ -224,7 +222,6 @@ if _ss.mode == "A":
 # =========================================================
 # 6. Mode B Implementation (InstantMesh - Placeholder)
 # =========================================================
-# (Mode B 코드는 기존과 완벽하게 동일하므로 생략 없이 유지됨 - 앞선 코드 블록 내용 참조)
 elif _ss.mode == "B":
     st.markdown("### 🟧 Mode B — 복잡한 가구 (InstantMesh)")
     st.info("🚧 파이프라인 개발 진행 중입니다...")

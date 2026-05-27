@@ -1,24 +1,39 @@
-# --- UI ---
+# --- Base UI & Utils ---
 streamlit
 opencv-python
 numpy
 Pillow
 psutil
 
-# --- AI model computation ---
+# --- AI Core & PyTorch ---
 torch
 torchvision
 einops
 omegaconf
 
-# --- 3D mesh ---
+# --- 3D Processing ---
 trimesh
+open3d
 huggingface_hub
+plyfile
+utils3d
 
-# --- SAM 2 library ---
-git+https://github.com/facebookresearch/sam2.git
-
-# --- TRELLIS library ---
+# --- TRELLIS Dependencies ---
 imageio
+imageio-ffmpeg
 rembg
 xformers
+spconv-cu121
+ninja
+easydict
+scipy
+tqdm
+transformers
+accelerate
+safetensors
+timm
+kornia
+onnxruntime
+
+# --- SAM 2 Library ---
+git+https://github.com/facebookresearch/sam2.git
