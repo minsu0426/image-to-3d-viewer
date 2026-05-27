@@ -14,7 +14,7 @@ def load_trellis_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # TRELLIS Large 모델 로드 (약 3~4GB 소요)
-    pipeline = TrellisImageTo3DPipeline.from_pretrained("JeffreyXiang/TRELLIS-image-large")
+    pipeline = TrellisImageTo3DPipeline.from_pretrained("microsoft/TRELLIS-image-large")
     pipeline.cuda()
     return pipeline, device
 

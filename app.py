@@ -6,6 +6,7 @@ import time
 import torch
 import os
 import urllib.request
+import urllib.parse
 import psutil
 import gc
 
@@ -90,7 +91,50 @@ def get_inference_preset():
     return p
 
 # =========================================================
-# 4. Streamlit User Interface
+# 4. Helper Functions (결과 출력 함수 - 위로 이동됨!)
+# =========================================================
+
+def _show_result(obj_path: str):
+    if not obj_path or not os.path.exists(obj_path):
+        st.error("생성된 .obj 메쉬 파일을 디스크에서 찾을 수 없습니다.")
+        return
+
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption(f"저장 경로: `{obj_path}`")
+        with open(obj_path, "rb") as f:
+            st.download_button(
+                label="⬇️ .obj 메쉬 파일 다운로드",
+                data=f.read(),
+                file_name=os.path.basename(obj_path),
+                mime="model/obj",
+                key=f"dl_obj_{os.path.basename(obj_path)}",
+                use_container_width=True
+            )
+
+    with col2:
+        st.markdown(
+            f'<a href="http://localhost:8502" target="_blank">'
+            f'<button style="background:#22aa66;color:white;border:none;'
+            f'padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;width:100%;height:38px;">'
+            f'🏠 다중 가상 쇼룸(Showroom) 열기 (새 탭)</button></a>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("🖥️ 로컬 3D 뷰어 미리보기 (Three.js)")
+    
+    # URL 파싱을 안전하게 처리하고 iframe 모듈 오류(st.iframe -> components.iframe) 수정
+    safe_path = urllib.parse.quote(obj_path.replace(os.sep, '/'))
+    viewer_url = f"http://localhost:8502/?obj={safe_path}"
+    
+    components.iframe(viewer_url, height=650, scrolling=False)
+    st.caption("※ 뷰어가 회색 화면으로 보이면 터미널에서 `streamlit run showroom.py --server.port 8502`가 구동 중인지 확인하세요.")
+
+# =========================================================
+# 5. Streamlit User Interface
 # =========================================================
 
 with st.sidebar:
@@ -150,7 +194,7 @@ if _ss.mode is None:
 st.divider()
 
 # =========================================================
-# 5. Mode A Implementation (SAM 2 + TRELLIS)
+# 6. Mode A Implementation (SAM 2 + TRELLIS)
 # =========================================================
 
 if _ss.mode == "A":
@@ -220,49 +264,8 @@ if _ss.mode == "A":
                 _show_result(_ss.mesh_path)
 
 # =========================================================
-# 6. Mode B Implementation (InstantMesh - Placeholder)
+# 7. Mode B Implementation (InstantMesh - Placeholder)
 # =========================================================
 elif _ss.mode == "B":
     st.markdown("### 🟧 Mode B — 복잡한 가구 (InstantMesh)")
     st.info("🚧 파이프라인 개발 진행 중입니다...")
-    # Mode B 코드는 기존과 동일하게 유지하시면 됩니다.
-
-# =========================================================
-# 7. Integrated Output & Multi-Port Embed Viewer
-# =========================================================
-
-def _show_result(obj_path: str):
-    if not obj_path or not os.path.exists(obj_path):
-        st.error("생성된 .obj 메쉬 파일을 디스크에서 찾을 수 없습니다.")
-        return
-
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.caption(f"저장 경로: `{obj_path}`")
-        with open(obj_path, "rb") as f:
-            st.download_button(
-                label="⬇️ .obj 메쉬 파일 다운로드",
-                data=f.read(),
-                file_name=os.path.basename(obj_path),
-                mime="model/obj",
-                key=f"dl_obj_{os.path.basename(obj_path)}",
-                use_container_width=True
-            )
-
-    with col2:
-        st.markdown(
-            f'<a href="http://localhost:8502" target="_blank">'
-            f'<button style="background:#22aa66;color:white;border:none;'
-            f'padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;width:100%;height:38px;">'
-            f'🏠 다중 가상 쇼룸(Showroom) 열기 (새 탭)</button></a>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("🖥️ 로컬 3D 뷰어 미리보기 (Three.js)")
-    
-    viewer_url = f"http://localhost:8502/?obj={obj_path.replace(os.sep, '/')}"
-    st.iframe(viewer_url, height=650, scrolling=False)
-    st.caption("※ 뷰어가 회색 화면으로 보이면 터미널에서 `streamlit run showroom.py --server.port 8502`가 구동 중인지 확인하세요.")
