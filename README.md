@@ -35,3 +35,17 @@ SAM 2(Segment Anything 2)와 TRELLIS를 결합한 지능형 2D-to-3D 변환 및 
 python -3.10 -m venv venv
 # Windows의 경우
 venv\Scripts\activate
+
+### 연구인용
+@article{ravi2024sam2,
+  title={SAM 2: Segment Anything in Images and Videos},
+  author={Ravi, Nikhila et al.},
+  journal={arXiv preprint arXiv:2408.00714},
+  year={2024}
+}
+
+@article{trellis2024,
+  title={TRELLIS: Structured 3D Latents for Scalable and Versatile 3D Generation},
+  author={Microsoft Research},
+  year={2024}
+}
