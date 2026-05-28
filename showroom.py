@@ -8,8 +8,41 @@ import glob
 st.set_page_config(page_title="3D Showroom & Viewer", page_icon="🏠", layout="wide")
 
 # =========================================================
-# 공통 유틸리티 함수
+# 공통 유틸리티 & JS 파서 (백슬래시 에러 방지용)
 # =========================================================
+
+# 💡 파이썬 3.10 f-string 백슬래시 에러를 막기 위해 JS 함수를 밖으로 뺐습니다.
+JS_PARSE_OBJ = r"""
+function parseOBJ(text) {
+    const positions=[], normals=[], uvs=[], verts=[];
+    for (const raw of text.split('\n')) {
+        const line=raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const p=line.split(/\s+/);
+        if (p[0]==='v') positions.push(+p[1],+p[2],+p[3]);
+        else if (p[0]==='vn') normals.push(+p[1],+p[2],+p[3]);
+        else if (p[0]==='f') {
+            const fv=p.slice(1);
+            for (let i=1;i<fv.length-1;i++) {
+                [fv[0],fv[i],fv[i+1]].forEach(t=>{
+                    const [vi,ti,ni]=t.split('/').map(x=>x?+x-1:undefined);
+                    verts.push({vi,ti,ni});
+                });
+            }
+        }
+    }
+    const posArr=new Float32Array(verts.length*3);
+    verts.forEach((v,i)=>{
+        posArr[i*3]=positions[v.vi*3];
+        posArr[i*3+1]=positions[v.vi*3+1];
+        posArr[i*3+2]=positions[v.vi*3+2];
+    });
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(posArr,3));
+    geo.computeVertexNormals();
+    return geo;
+}
+"""
 
 def get_obj_list() -> list:
     """쇼룸 모드에서 사용할 전체 .obj 파일 목록 로드"""
@@ -68,10 +101,10 @@ if single_obj_path:
     import * as THREE from 'three';
     
     const objText = new TextDecoder().decode(Uint8Array.from(atob("{obj_b64}"), c=>c.charCodeAt(0)));
-    {"" if False else "function parseOBJ(text) { const positions=[], normals=[], uvs=[], verts=[]; for (const raw of text.split('\\n')) { const line=raw.trim(); if (!line || line.startsWith('#')) continue; const p=line.split(/\\s+/); if (p[0]==='v') positions.push(+p[1],+p[2],+p[3]); else if (p[0]==='vn') normals.push(+p[1],+p[2],+p[3]); else if (p[0]==='f') { const fv=p.slice(1); for (let i=1;i<fv.length-1;i++) [fv[0],fv[i],fv[i+1]].forEach(t=>{ const [vi,ti,ni]=t.split('/').map(x=>x?+x-1:undefined); verts.push({vi,ti,ni}); }); } } const posArr=new Float32Array(verts.length*3); verts.forEach((v,i)=>{ posArr[i*3]=positions[v.vi*3]; posArr[i*3+1]=positions[v.vi*3+1]; posArr[i*3+2]=positions[v.vi*3+2]; }); const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(posArr,3)); geo.computeVertexNormals(); return geo; }"}
+    {JS_PARSE_OBJ}
     
     const canvas=document.getElementById('c');
-    const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+    const renderer=new THREE.WebGLRenderer({{canvas,antialias:true}});
     renderer.setSize(window.innerWidth, window.innerHeight);
     
     const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0d0d14);
@@ -86,7 +119,7 @@ if single_obj_path:
     const ctr=new THREE.Vector3(); geo.boundingBox.getCenter(ctr); geo.translate(-ctr.x,-ctr.y,-ctr.z);
     const sz=new THREE.Vector3(); geo.boundingBox.getSize(sz); geo.scale(...Array(3).fill(1.8/Math.max(sz.x,sz.y,sz.z)));
     
-    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:0xccccee, metalness:0.15, roughness:0.6, side:THREE.DoubleSide}));
+    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({{color:0xccccee, metalness:0.15, roughness:0.6, side:THREE.DoubleSide}}));
     scene.add(mesh);
     
     let drag=false,rDrag=false,px=0,py=0;
@@ -113,7 +146,7 @@ if single_obj_path:
     </script>
     </body>
     </html>"""
-    st.iframe(html_content, height=650, scrolling=False)
+    st.components.v1.html(html_content, height=650, scrolling=False)
 # ---------------------------------------------------------
 # 모드 [2] 다중 가상 쇼룸 모드 (기본 파라미터가 없을 때)
 # ---------------------------------------------------------
@@ -180,10 +213,10 @@ else:
     import * as THREE from 'three';
     
     const OBJECTS = {objects_json};
-    {"" if False else "function parseOBJ(text) { const positions=[], normals=[], uvs=[], verts=[]; for (const raw of text.split('\\n')) { const line=raw.trim(); if (!line || line.startsWith('#')) continue; const p=line.split(/\\s+/); if (p[0]==='v') positions.push(+p[1],+p[2],+p[3]); else if (p[0]==='vn') normals.push(+p[1],+p[2],+p[3]); else if (p[0]==='f') { const fv=p.slice(1); for (let i=1;i<fv.length-1;i++) [fv[0],fv[i],fv[i+1]].forEach(t=>{ const [vi,ti,ni]=t.split('/').map(x=>x?+x-1:undefined); verts.push({vi,ti,ni}); }); } } const posArr=new Float32Array(verts.length*3); verts.forEach((v,i)=>{ posArr[i*3]=positions[v.vi*3]; posArr[i*3+1]=positions[v.vi*3+1]; posArr[i*3+2]=positions[v.vi*3+2]; }); const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(posArr,3)); geo.computeVertexNormals(); return geo; }"}
+    {JS_PARSE_OBJ}
     
     const canvas=document.getElementById('c');
-    const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+    const renderer=new THREE.WebGLRenderer({{canvas,antialias:true}});
     renderer.setSize(window.innerWidth,window.innerHeight);
     renderer.shadowMap.enabled=true;
     
@@ -194,12 +227,12 @@ else:
     scene.add(new THREE.AmbientLight(0xffffff,0.5));
     const dir=new THREE.DirectionalLight(0xffffff,1.2); dir.position.set(8,12,8); dir.castShadow=true; scene.add(dir);
     
-    const floor=new THREE.Mesh(new THREE.PlaneGeometry(40,40), new THREE.MeshStandardMaterial({color:0x111122,roughness:0.9}));
+    const floor=new THREE.Mesh(new THREE.PlaneGeometry(40,40), new THREE.MeshStandardMaterial({{color:0x111122,roughness:0.9}}));
     floor.rotation.x=-Math.PI/2; floor.position.y=-1; floor.receiveShadow=true; scene.add(floor);
     const grid=new THREE.GridHelper(40,40,0x222244,0x1a1a33); grid.position.y=-0.99; scene.add(grid);
     
     const COLORS=[0x6688ff,0xff8866,0x66ff88,0xffcc44,0xff66aa];
-    const meshes={};
+    const meshes={{}};
     
     for (const obj of OBJECTS) {{
       const geo=parseOBJ(new TextDecoder().decode(Uint8Array.from(atob(obj.b64),c=>c.charCodeAt(0))));
@@ -207,7 +240,7 @@ else:
       const ctr=new THREE.Vector3(); geo.boundingBox.getCenter(ctr); geo.translate(-ctr.x,-ctr.y,-ctr.z);
       const sz=new THREE.Vector3(); geo.boundingBox.getSize(sz); geo.scale(...Array(3).fill(1.5/Math.max(sz.x,sz.y,sz.z)));
       
-      const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:COLORS[obj.id%COLORS.length], roughness:0.6, side:THREE.DoubleSide}));
+      const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({{color:COLORS[obj.id%COLORS.length], roughness:0.6, side:THREE.DoubleSide}}));
       mesh.castShadow=mesh.receiveShadow=true; mesh.position.set(obj.x, 0, obj.z);
       scene.add(mesh); meshes[obj.id]=mesh;
     }}
@@ -252,4 +285,4 @@ else:
     </script>
     </body>
     </html>"""
-    st.iframe(html_content, height=750, scrolling=False)
+    st.components.v1.html(html_content, height=750, scrolling=False)
