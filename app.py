@@ -17,7 +17,6 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 # =========================================================
 # 1. Page Configuration & Session State
 # =========================================================
-
 st.set_page_config(
     page_title="Image to 3D Viewer",
     page_icon="🧊",
@@ -43,7 +42,6 @@ _init("video_path", None)
 # =========================================================
 # 2. AI Model Loaders (Cached Resource)
 # =========================================================
-
 @st.cache_resource
 def load_sam2_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,7 +68,6 @@ def load_sam2_model():
 # =========================================================
 # 3. Dynamic Environment Preset
 # =========================================================
-
 def get_inference_preset():
     vm = psutil.virtual_memory()
     avail = vm.available / (1024 ** 3)
@@ -91,9 +88,8 @@ def get_inference_preset():
     return p
 
 # =========================================================
-# 4. Helper Functions (결과 출력 함수 - 위로 이동됨!)
+# 4. Helper Functions
 # =========================================================
-
 def _show_result(obj_path: str):
     if not obj_path or not os.path.exists(obj_path):
         st.error("생성된 .obj 메쉬 파일을 디스크에서 찾을 수 없습니다.")
@@ -126,7 +122,6 @@ def _show_result(obj_path: str):
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🖥️ 로컬 3D 뷰어 미리보기 (Three.js)")
     
-    # URL 파싱을 안전하게 처리하고 iframe 모듈 오류(st.iframe -> components.iframe) 수정
     safe_path = urllib.parse.quote(obj_path.replace(os.sep, '/'))
     viewer_url = f"http://localhost:8502/?obj={safe_path}"
     
@@ -136,7 +131,6 @@ def _show_result(obj_path: str):
 # =========================================================
 # 5. Streamlit User Interface
 # =========================================================
-
 with st.sidebar:
     st.subheader("🖥️ 시스템 자원 모니터링")
     _vm = psutil.virtual_memory()
@@ -196,7 +190,6 @@ st.divider()
 # =========================================================
 # 6. Mode A Implementation (SAM 2 + TRELLIS)
 # =========================================================
-
 if _ss.mode == "A":
     st.markdown("### 🟦 Mode A — 단순 객체 다각도 상상 복원 (TRELLIS)")
     
@@ -215,11 +208,11 @@ if _ss.mode == "A":
         st.image(image, caption="업로드 원본 이미지", use_column_width=True)
         st.divider()
 
-        # Step 2: SAM2 (Box Prompt Patch)
         st.subheader("Step 2: 배경 제거 및 객체 세그멘테이션 (SAM 2)")
         if st.button("SAM 2 실행", key="modeA_sam2") or _ss.sam2_done:
             if not _ss.sam2_done:
                 with st.spinner("SAM 2 기반 객체 외곽 분석 및 배경 분리 중..."):
+                    import cv2
                     predictor, device = load_sam2_model()
                     img_rgb = np.array(image.convert("RGB"))
                     predictor.set_image(img_rgb)
@@ -231,23 +224,26 @@ if _ss.mode == "A":
                         box=box, multimask_output=False,
                     )
                     mask_2d = masks.squeeze()
+                    
+                    # 1차 평탄화: 마스크 테두리 블러 처리
+                    alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
+                    alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
+                    
                     img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
                     img_rgba[:, :, :3] = img_rgb
-                    img_rgba[:, :, 3] = (mask_2d > 0).astype(np.uint8) * 255
+                    img_rgba[:, :, 3] = alpha_channel
                     
-                    # TRELLIS는 투명 배경(RGBA)이나 흰색 배경을 선호합니다.
                     _ss.extracted_image = Image.fromarray(img_rgba, "RGBA")
                     _ss.sam2_done = True
 
             st.success("✅ 세그멘테이션 완료!")
-            st.image(_ss.extracted_image, caption="알파 채널 마스크가 적용된 객체", use_column_width=True)
+            st.image(_ss.extracted_image, caption="외곽선이 다듬어진 객체 마스크", use_column_width=True)
             st.divider()
 
-            # Step 3: TRELLIS Inference
             st.subheader("Step 3: 3D 메쉬 생성 (TRELLIS)")
             if st.button("TRELLIS 모델 실행", key="modeA_trellis") or _ss.trellis_done:
                 if not _ss.trellis_done:
-                    from pipeline.trellis import run_modea_trellis # 모듈 동적 임포트
+                    from pipeline.trellis import run_modea_trellis
                     
                     base_dir = os.path.dirname(os.path.abspath(__file__))
                     output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
@@ -256,11 +252,23 @@ if _ss.mode == "A":
                     preset = get_inference_preset()
                     
                     with st.spinner("🔄 TRELLIS: 단일 이미지 다각도 상상 및 3D 공간 복원 중..."):
-                        mesh_path = run_modea_trellis(_ss.extracted_image, output_dir, preset["resolution"])
-                    _ss.mesh_path = mesh_path
+                        raw_mesh_path = run_modea_trellis(_ss.extracted_image, output_dir, preset["resolution"])
+                    
+                    # 💡 2차 평탄화: Open3D를 이용한 3D 메쉬 표면 다림질 작업
+                    with st.spinner("✨ 3D 메쉬 표면 평탄화(Smoothing) 작업 중..."):
+                        import open3d as o3d
+                        mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
+                        # Taubin 스무딩: 부피 수축을 방지하면서 뾰족하고 거친 표면만 펴주는 고급 알고리즘
+                        mesh = mesh.filter_smooth_taubin(number_of_iterations=20)
+                        # 빛 반사가 자연스럽도록 노말(법선) 재계산
+                        mesh.compute_vertex_normals()
+                        # 다림질 완료된 모델 덮어쓰기
+                        o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
+                        
+                    _ss.mesh_path = raw_mesh_path
                     _ss.trellis_done = True
 
-                st.success("✅ 3D 메쉬 생성이 정상 완료되었습니다!")
+                st.success("✅ 3D 메쉬 평탄화 및 생성이 정상 완료되었습니다!")
                 _show_result(_ss.mesh_path)
 
 # =========================================================
