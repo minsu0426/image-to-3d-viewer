@@ -4,9 +4,9 @@ SAM 2(Segment Anything 2)와 TRELLIS를 결합한 지능형 2D-to-3D 변환 및 
 
 ## 🌟 1. 핵심 기능 (Core Features)
 
-* **정밀 객체 세그멘테이션 (SAM 2 Integration):** 사용자의 이미지를 분석하여 텍스트 파편화나 배경 노이즈 없이 객체만 픽셀 단위로 정교하게 분리하고 투명 배경(RGBA)으로 추출합니다.
-* **고품질 3D 메쉬 생성 (TRELLIS Engine - Mode A):** 추출된 2D 이미지를 입력받아 Microsoft의 최신 3D 파운데이션 모델인 TRELLIS를 통해 다각도를 상상하고, 기하학적 구조가 정교한 3D 메쉬(.obj)를 생성합니다. (기존 TripoSR 대비 Hallucination 퀄리티 대폭 향상)
-* **인터랙티브 3D 가상 쇼룸 (3D Visualization):** Three.js 기반의 독립된 렌더링 엔진(`showroom.py`)을 통해 생성된 3D 객체들을 격자 형태의 쇼룸에 동시 배치합니다. 슬라이더를 통해 크기, 위치, 회전값을 실시간으로 조절할 수 있습니다.
+* **정밀 객체 세그멘테이션 (SAM 2 Integration):** 사용자의 이미지를 분석하여 텍스트 파편화나 배경 노이즈 없이 객체만 픽셀 단위로 정교하게 분리하고 투명 배경(RGBA)으로 추출합니다. 추출 후 OpenCV를 통한 정밀 노이즈 제거 및 테두리 평탄화(Erosion & Blur) 작업이 적용됩니다.
+* **고품질 3D 메쉬 생성 (TRELLIS Engine - Mode A):** 추출된 2D 이미지를 입력받아 Microsoft의 최신 3D 파운데이션 모델인 TRELLIS를 통해 다각도를 상상하고, 기하학적 구조가 정교한 3D 메쉬(.obj)를 생성합니다. 생성 후 Open3D를 이용한 표면 다림질(Taubin Smoothing) 알고리즘이 적용됩니다.
+* **인터랙티브 3D 가상 쇼룸 (3D Visualization):** Three.js 기반의 독립된 렌더링 엔진(`showroom.py`)을 통해 생성된 3D 객체들을 격자 형태의 쇼룸에 동시 배치합니다. 마우스 드래그를 통한 자유로운 이동/크기/회전 조작과 실시간 색상(Color) 변경을 지원합니다.
 
 ## 🔄 2. 시스템 파이프라인 (System Pipeline)
 
@@ -35,17 +35,3 @@ SAM 2(Segment Anything 2)와 TRELLIS를 결합한 지능형 2D-to-3D 변환 및 
 python -3.10 -m venv venv
 # Windows의 경우
 venv\Scripts\activate
-
-### 연구인용
-@article{ravi2024sam2,
-  title={SAM 2: Segment Anything in Images and Videos},
-  author={Ravi, Nikhila et al.},
-  journal={arXiv preprint arXiv:2408.00714},
-  year={2024}
-}
-
-@article{trellis2024,
-  title={TRELLIS: Structured 3D Latents for Scalable and Versatile 3D Generation},
-  author={Microsoft Research},
-  year={2024}
-}

@@ -208,6 +208,7 @@ if _ss.mode == "A":
         st.image(image, caption="업로드 원본 이미지", use_column_width=True)
         st.divider()
 
+        # Step 2: SAM2 (Box Prompt Patch)
         st.subheader("Step 2: 배경 제거 및 객체 세그멘테이션 (SAM 2)")
         if st.button("SAM 2 실행", key="modeA_sam2") or _ss.sam2_done:
             if not _ss.sam2_done:
@@ -218,17 +219,37 @@ if _ss.mode == "A":
                     predictor.set_image(img_rgb)
                     h, w, _ = img_rgb.shape
                     
-                    box = np.array([[int(w*0.15), int(h*0.15), int(w*0.85), int(h*0.85)]])
+                    # 캔처럼 꽉 찬 이미지를 위해 타겟 박스를 조금 더 넓게(10%~90%) 잡습니다.
+                    box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
                     masks, _, _ = predictor.predict(
                         point_coords=None, point_labels=None,
                         box=box, multimask_output=False,
                     )
                     mask_2d = masks.squeeze()
-                    
-                    # 1차 평탄화: 마스크 테두리 블러 처리
                     alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
+                    
+                    # =======================================================
+                    # 💡 마스크 정밀 후처리 (노이즈 제거 및 테두리 깎기)
+                    # =======================================================
+                    
+                    # 1. 노이즈(파편) 제거: 덩어리(Contour)를 모두 찾아서 가장 큰 본체 1개만 남깁니다.
+                    contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        largest_contour = max(contours, key=cv2.contourArea)
+                        clean_mask = np.zeros_like(alpha_channel)
+                        cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+                        alpha_channel = clean_mask
+
+                    # 2. 테두리 침식(Erosion): 마스크의 테두리를 안쪽으로 파먹어서 흰색 배경 묻은 것을 잘라냅니다.
+                    kernel = np.ones((5, 5), np.uint8)
+                    # iterations 숫자를 키울수록 테두리가 더 많이 깎여나갑니다. (기본 3 추천)
+                    alpha_channel = cv2.erode(alpha_channel, kernel, iterations=3)
+                    
+                    # 3. 깎아낸 경계면을 부드럽게 다듬기
                     alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
                     
+                    # =======================================================
+
                     img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
                     img_rgba[:, :, :3] = img_rgb
                     img_rgba[:, :, 3] = alpha_channel
@@ -237,7 +258,8 @@ if _ss.mode == "A":
                     _ss.sam2_done = True
 
             st.success("✅ 세그멘테이션 완료!")
-            st.image(_ss.extracted_image, caption="외곽선이 다듬어진 객체 마스크", use_column_width=True)
+            # 노란색 경고창(Warning) 해결을 위해 use_container_width 로 수정
+            st.image(_ss.extracted_image, caption="노이즈 및 테두리가 제거된 객체 마스크", use_container_width=True)
             st.divider()
 
             st.subheader("Step 3: 3D 메쉬 생성 (TRELLIS)")
