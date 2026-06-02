@@ -9,6 +9,8 @@ import urllib.request
 import urllib.parse
 import psutil
 import gc
+import cv2
+import tempfile
 
 # SAM 2 Libraries
 from sam2.build_sam import build_sam2
@@ -32,12 +34,15 @@ def _init(key, val):
 _init("mode", None)            
 _init("sam2_done", False)
 _init("trellis_done", False) 
-_init("modeb_done", False)
 _init("extracted_image", None) 
 _init("mesh_path", None)
 _init("last_uploaded", None)
-_init("modeb_images", [])      
-_init("video_path", None)      
+
+# Mode B 전용 세션 상태
+_init("modeb_keyframes", [])
+_init("modeb_segmented_frames", [])
+_init("modeb_sam2_done", False)
+_init("modeb_lrm_done", False)
 
 # =========================================================
 # 2. AI Model Loaders (Cached Resource)
@@ -66,7 +71,7 @@ def load_sam2_model():
     return SAM2ImagePredictor(model), device
 
 # =========================================================
-# 3. Dynamic Environment Preset
+# 3. Helper Functions (비디오 처리 및 UI)
 # =========================================================
 def get_inference_preset():
     vm = psutil.virtual_memory()
@@ -87,16 +92,46 @@ def get_inference_preset():
     p["total_gb"] = total
     return p
 
-# =========================================================
-# 4. Helper Functions
-# =========================================================
+def extract_smart_keyframes(video_path, num_frames=6, target_size=(512, 512)):
+    """동영상에서 선명한 핵심 프레임 N장을 추출하는 함수"""
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    interval = total_frames // num_frames
+    extracted_images = []
+    
+    for i in range(num_frames):
+        start_frame = i * interval
+        end_frame = min((i + 1) * interval, total_frames)
+        best_frame = None
+        max_sharpness = -1
+        
+        step = max(1, (end_frame - start_frame) // 10)
+        for f_idx in range(start_frame, end_frame, step):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+            ret, frame = cap.read()
+            if not ret: continue
+            
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+            if sharpness > max_sharpness:
+                max_sharpness = sharpness
+                best_frame = frame
+                
+        if best_frame is not None:
+            best_frame = cv2.cvtColor(best_frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(best_frame)
+            img.thumbnail(target_size, Image.Resampling.LANCZOS) 
+            extracted_images.append(img)
+            
+    cap.release()
+    return extracted_images
+
 def _show_result(obj_path: str):
     if not obj_path or not os.path.exists(obj_path):
         st.error("생성된 .obj 메쉬 파일을 디스크에서 찾을 수 없습니다.")
         return
 
     st.divider()
-    
     col1, col2 = st.columns(2)
     with col1:
         st.caption(f"저장 경로: `{obj_path}`")
@@ -109,7 +144,6 @@ def _show_result(obj_path: str):
                 key=f"dl_obj_{os.path.basename(obj_path)}",
                 use_container_width=True
             )
-
     with col2:
         st.markdown(
             f'<a href="http://localhost:8502" target="_blank">'
@@ -118,18 +152,14 @@ def _show_result(obj_path: str):
             f'🏠 다중 가상 쇼룸(Showroom) 열기 (새 탭)</button></a>',
             unsafe_allow_html=True,
         )
-
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🖥️ 로컬 3D 뷰어 미리보기 (Three.js)")
-    
     safe_path = urllib.parse.quote(obj_path.replace(os.sep, '/'))
     viewer_url = f"http://localhost:8502/?obj={safe_path}"
-    
     components.iframe(viewer_url, height=650, scrolling=False)
-    st.caption("※ 뷰어가 회색 화면으로 보이면 터미널에서 `streamlit run showroom.py --server.port 8502`가 구동 중인지 확인하세요.")
 
 # =========================================================
-# 5. Streamlit User Interface
+# 4. Streamlit User Interface (Sidebar & Mode Selection)
 # =========================================================
 with st.sidebar:
     st.subheader("🖥️ 시스템 자원 모니터링")
@@ -162,24 +192,21 @@ with col_a:
         _ss.mode = "A"
         _ss.sam2_done = False
         _ss.trellis_done = False
-        _ss.modeb_done = False
         _ss.extracted_image = None
         _ss.mesh_path = None
 
 with col_b:
-    if st.button("🟧 Mode B\n복잡한 가구 (다중 사진/영상)\nInstantMesh", use_container_width=True):
+    if st.button("🟧 Mode B\n복잡한 가구 (비디오/다중 사진)\nSAM 2 Batch → LRM", use_container_width=True):
         st.cache_resource.clear()
         gc.collect()
         if torch.cuda.is_available(): torch.cuda.empty_cache()
             
         _ss.mode = "B"
-        _ss.sam2_done = False
-        _ss.trellis_done = False
-        _ss.modeb_done = False
-        _ss.extracted_image = None
+        _ss.modeb_keyframes = []
+        _ss.modeb_segmented_frames = []
+        _ss.modeb_sam2_done = False
+        _ss.modeb_lrm_done = False
         _ss.mesh_path = None
-        _ss.modeb_images = []
-        _ss.video_path = None
 
 if _ss.mode is None:
     st.info("👆 분석하고자 하는 물체의 형태에 알맞은 변환 모드를 선택해주세요.")
@@ -188,10 +215,10 @@ if _ss.mode is None:
 st.divider()
 
 # =========================================================
-# 6. Mode A Implementation (SAM 2 + TRELLIS)
+# 5. Mode A Implementation (SAM 2 + TRELLIS)
 # =========================================================
 if _ss.mode == "A":
-    st.markdown("### 🟦 Mode A — 단순 객체 다각도 상상 복원 (TRELLIS)")
+    st.markdown("### 🟦 Mode A — 단순 객체 단일 이미지 복원 (TRELLIS)")
     
     st.subheader("Step 1: 이미지 업로드")
     uploaded_file = st.file_uploader("단일 이미지를 업로드하세요.", type=["png", "jpg", "jpeg"], key="modeA_upload")
@@ -205,21 +232,18 @@ if _ss.mode == "A":
             _ss.last_uploaded = uploaded_file.name
 
         image = Image.open(uploaded_file)
-        st.image(image, caption="업로드 원본 이미지", use_column_width=True)
+        st.image(image, caption="업로드 원본 이미지", use_container_width=True)
         st.divider()
 
-        # Step 2: SAM2 (Box Prompt Patch)
         st.subheader("Step 2: 배경 제거 및 객체 세그멘테이션 (SAM 2)")
         if st.button("SAM 2 실행", key="modeA_sam2") or _ss.sam2_done:
             if not _ss.sam2_done:
                 with st.spinner("SAM 2 기반 객체 외곽 분석 및 배경 분리 중..."):
-                    import cv2
                     predictor, device = load_sam2_model()
                     img_rgb = np.array(image.convert("RGB"))
                     predictor.set_image(img_rgb)
                     h, w, _ = img_rgb.shape
                     
-                    # 캔처럼 꽉 찬 이미지를 위해 타겟 박스를 조금 더 넓게(10%~90%) 잡습니다.
                     box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
                     masks, _, _ = predictor.predict(
                         point_coords=None, point_labels=None,
@@ -228,11 +252,6 @@ if _ss.mode == "A":
                     mask_2d = masks.squeeze()
                     alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
                     
-                    # =======================================================
-                    # 💡 마스크 정밀 후처리 (노이즈 제거 및 테두리 깎기)
-                    # =======================================================
-                    
-                    # 1. 노이즈(파편) 제거: 덩어리(Contour)를 모두 찾아서 가장 큰 본체 1개만 남깁니다.
                     contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if contours:
                         largest_contour = max(contours, key=cv2.contourArea)
@@ -240,15 +259,9 @@ if _ss.mode == "A":
                         cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
                         alpha_channel = clean_mask
 
-                    # 2. 테두리 침식(Erosion): 마스크의 테두리를 안쪽으로 파먹어서 흰색 배경 묻은 것을 잘라냅니다.
                     kernel = np.ones((5, 5), np.uint8)
-                    # iterations 숫자를 키울수록 테두리가 더 많이 깎여나갑니다. (기본 3 추천)
                     alpha_channel = cv2.erode(alpha_channel, kernel, iterations=3)
-                    
-                    # 3. 깎아낸 경계면을 부드럽게 다듬기
                     alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
-                    
-                    # =======================================================
 
                     img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
                     img_rgba[:, :, :3] = img_rgb
@@ -258,7 +271,6 @@ if _ss.mode == "A":
                     _ss.sam2_done = True
 
             st.success("✅ 세그멘테이션 완료!")
-            # 노란색 경고창(Warning) 해결을 위해 use_container_width 로 수정
             st.image(_ss.extracted_image, caption="노이즈 및 테두리가 제거된 객체 마스크", use_container_width=True)
             st.divider()
 
@@ -276,26 +288,139 @@ if _ss.mode == "A":
                     with st.spinner("🔄 TRELLIS: 단일 이미지 다각도 상상 및 3D 공간 복원 중..."):
                         raw_mesh_path = run_modea_trellis(_ss.extracted_image, output_dir, preset["resolution"])
                     
-                    # 💡 2차 평탄화: Open3D를 이용한 3D 메쉬 표면 다림질 작업
                     with st.spinner("✨ 3D 메쉬 표면 평탄화(Smoothing) 작업 중..."):
                         import open3d as o3d
                         mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
-                        # Taubin 스무딩: 부피 수축을 방지하면서 뾰족하고 거친 표면만 펴주는 고급 알고리즘
                         mesh = mesh.filter_smooth_taubin(number_of_iterations=20)
-                        # 빛 반사가 자연스럽도록 노말(법선) 재계산
                         mesh.compute_vertex_normals()
-                        # 다림질 완료된 모델 덮어쓰기
                         o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
                         
                     _ss.mesh_path = raw_mesh_path
                     _ss.trellis_done = True
 
-                st.success("✅ 3D 메쉬 평탄화 및 생성이 정상 완료되었습니다!")
+                st.success("✅ 3D 메쉬 생성이 정상 완료되었습니다!")
                 _show_result(_ss.mesh_path)
 
 # =========================================================
-# 7. Mode B Implementation (InstantMesh - Placeholder)
+# 6. Mode B Implementation (Video/Multi-Image -> SAM 2 -> LRM)
 # =========================================================
 elif _ss.mode == "B":
-    st.markdown("### 🟧 Mode B — 복잡한 가구 (InstantMesh)")
-    st.info("🚧 파이프라인 개발 진행 중입니다...")
+    st.markdown("### 🟧 Mode B — 다각도 데이터 기반 정밀 복원 (InstantMesh LRM)")
+    
+    st.subheader("Step 1: 데이터 입력 (비디오 또는 다중 이미지)")
+    tab1, tab2 = st.tabs(["🎥 동영상 업로드 (자동 추출)", "🖼️ 다중 이미지 직접 업로드"])
+    
+    with tab1:
+        st.info("물체를 360도로 돌려가며 찍은 짧은 영상을 업로드하세요. AI가 가장 선명한 핵심 프레임 6장을 자동으로 뽑아냅니다.")
+        uploaded_video = st.file_uploader("동영상 파일 업로드 (mp4, mov)", type=["mp4", "mov", "avi"])
+        
+        if uploaded_video:
+            if st.button("핵심 프레임 추출하기", key="extract_video"):
+                with st.spinner("비디오 분석 및 흔들림(Blur) 검사 중..."):
+                    # 비디오 파일을 임시 저장 후 OpenCV로 읽기
+                    tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                    tfile.write(uploaded_video.read())
+                    tfile.flush()
+                    
+                    # 스마트 프레임 추출 함수 실행
+                    _ss.modeb_keyframes = extract_smart_keyframes(tfile.name, num_frames=6, target_size=(512, 512))
+                    
+                    # 임시 파일 삭제 및 상태 초기화
+                    tfile.close()
+                    os.unlink(tfile.name)
+                    
+                    _ss.modeb_sam2_done = False
+                    _ss.modeb_lrm_done = False
+                st.success("✅ 고품질 핵심 프레임 6장 추출 완료!")
+
+    with tab2:
+        st.info("객체의 앞, 뒤, 좌, 우 등을 찍은 사진을 4~6장 한꺼번에 업로드하세요.")
+        uploaded_images = st.file_uploader("다중 이미지 업로드", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+        
+        if uploaded_images and len(uploaded_images) >= 2:
+            if st.button("프레임 적용하기", key="apply_images"):
+                with st.spinner("이미지 최적화 중..."):
+                    imgs = []
+                    for file in uploaded_images[:6]: # 최대 6장 제한
+                        img = Image.open(file).convert("RGB")
+                        img.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                        imgs.append(img)
+                    _ss.modeb_keyframes = imgs
+                    _ss.modeb_sam2_done = False
+                    _ss.modeb_lrm_done = False
+                st.success(f"✅ {len(imgs)}장의 핵심 프레임 등록 완료!")
+
+    # 추출/업로드된 프레임이 존재하면 화면에 갤러리 형태로 보여줌
+    if _ss.modeb_keyframes:
+        st.write("**[확보된 핵심 프레임]**")
+        cols = st.columns(len(_ss.modeb_keyframes))
+        for idx, img in enumerate(_ss.modeb_keyframes):
+            cols[idx].image(img, use_container_width=True, caption=f"프레임 {idx+1}")
+        
+        st.divider()
+        
+        # Step 2: Batch SAM 2
+        st.subheader("Step 2: 일괄 세그멘테이션 (Batch SAM 2)")
+        if st.button("모든 프레임 배경 제거", key="modeb_sam2") or _ss.modeb_sam2_done:
+            if not _ss.modeb_sam2_done:
+                predictor, device = load_sam2_model()
+                processed_frames = []
+                
+                # 프로그레스 바를 띄우고 순차적으로 누끼 작업 진행
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, frame_img in enumerate(_ss.modeb_keyframes):
+                    status_text.text(f"프레임 {idx+1}/{len(_ss.modeb_keyframes)} 배경 제거 중...")
+                    img_rgb = np.array(frame_img)
+                    predictor.set_image(img_rgb)
+                    h, w, _ = img_rgb.shape
+                    
+                    box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
+                    masks, _, _ = predictor.predict(
+                        point_coords=None, point_labels=None,
+                        box=box, multimask_output=False,
+                    )
+                    mask_2d = masks.squeeze()
+                    alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
+                    
+                    # 마스크 다듬기 (Mode A와 동일한 정밀 세팅)
+                    contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        largest_contour = max(contours, key=cv2.contourArea)
+                        clean_mask = np.zeros_like(alpha_channel)
+                        cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+                        alpha_channel = clean_mask
+                        
+                    kernel = np.ones((5, 5), np.uint8)
+                    alpha_channel = cv2.erode(alpha_channel, kernel, iterations=3)
+                    alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
+                    
+                    img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+                    img_rgba[:, :, :3] = img_rgb
+                    img_rgba[:, :, 3] = alpha_channel
+                    processed_frames.append(Image.fromarray(img_rgba, "RGBA"))
+                    
+                    progress_bar.progress((idx + 1) / len(_ss.modeb_keyframes))
+                
+                status_text.empty()
+                _ss.modeb_segmented_frames = processed_frames
+                _ss.modeb_sam2_done = True
+                
+                # 💡 핵심: LRM 구동 전에 VRAM 공간 확보를 위해 SAM 2 메모리 강제 반환
+                del predictor
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            st.success("✅ 모든 프레임 누끼 및 VRAM 정리 완료!")
+            cols = st.columns(len(_ss.modeb_segmented_frames))
+            for idx, img in enumerate(_ss.modeb_segmented_frames):
+                cols[idx].image(img, use_container_width=True, caption=f"투명 프레임 {idx+1}")
+            
+            st.divider()
+            
+            # Step 3: LRM Inference (Placeholder for next implementation)
+            st.subheader("Step 3: 다각도 3D 복원 (InstantMesh LRM)")
+            if st.button("LRM 3D 엔진 구동", key="modeb_lrm"):
+                st.info("🚧 이 버튼은 InstantMesh 파이프라인(`pipeline/instantmesh.py`)이 작성되면 연결됩니다!\n\n현재 VRAM에는 완벽하게 투명 배경 처리된 4~6장의 최적화 이미지가 대기 중이며, SAM 2가 메모리에서 성공적으로 비워져 InstantMesh를 구동할 준비가 완료되었습니다.")
