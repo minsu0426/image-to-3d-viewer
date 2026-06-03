@@ -14,3 +14,7 @@ venv/
 
 # 기타 폴더
 trellis/
+
+# 외부 라이브러리 소스코드 무시
+nvdiffrast/
+pipeline/instantmesh_core/

@@ -17,6 +17,7 @@ open3d
 huggingface_hub
 plyfile
 utils3d
+git+https://github.com/NVlabs/nvdiffrast.git
 
 # --- TRELLIS Dependencies ---
 imageio
