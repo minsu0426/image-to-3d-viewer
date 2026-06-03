@@ -9,6 +9,8 @@ __pycache__/
 *.pyc
 .env
 
-echo venv/ >> .gitignore
-venv/ 
+# 가상환경
+venv/
+
+# 기타 폴더
 trellis/
