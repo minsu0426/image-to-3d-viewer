@@ -275,29 +275,23 @@ if _ss.mode == "A":
                     predictor.set_image(img_rgb)
                     h, w, _ = img_rgb.shape
                     
-                    # [핵심 로직] 1. Rembg로 1차 실루엣(마스크) 추출
                     rembg_session = new_session("u2net")
                     rembg_mask = remove(img_rgb, session=rembg_session, only_mask=True)
                     
-                    # [핵심 로직] 2. 실루엣에서 완벽한 타이트 바운딩 박스 계산
                     contours, _ = cv2.findContours(rembg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if contours:
                         c = max(contours, key=cv2.contourArea)
                         x, y, bw, bh = cv2.boundingRect(c)
-                        # 박스를 약간(10픽셀) 넉넉하게 주어 잘림 방지
                         box = np.array([[max(0, x-10), max(0, y-10), min(w, x+bw+10), min(h, y+bh+10)]])
                     else:
-                        # 예외 처리: Rembg가 실패했을 경우 기존 중앙 박스 사용
                         box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
 
-                    # [핵심 로직] 3. 추출된 완벽한 박스를 SAM 2에 전달하여 최종 픽셀 마스크 생성
                     masks, _, _ = predictor.predict(
                         point_coords=None, point_labels=None, box=box, multimask_output=False,
                     )
                     mask_2d = masks.squeeze()
                     alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
                     
-                    # OpenCV 후처리 (구멍 메우기 및 테두리 다듬기)
                     contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if contours:
                         largest_contour = max(contours, key=cv2.contourArea)
@@ -359,20 +353,22 @@ elif _ss.mode == "B":
         uploaded_video = st.file_uploader("동영상 또는 GIF 파일 업로드", type=["mp4", "mov", "avi", "gif"])
         
         if uploaded_video:
+            num_extract = st.slider("📸 추출할 프레임 수 (많을수록 정면을 찾을 확률이 높아집니다)", min_value=6, max_value=15, value=8, step=1)
+            
             if st.button("핵심 프레임 추출하기", key="extract_video"):
-                with st.spinner("미디어 분석 및 흔들림(Blur) 검사 중..."):
+                with st.spinner("미디어 분석 및 프레임 추출 중..."):
                     ext = os.path.splitext(uploaded_video.name)[1].lower()
                     tfile = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
                     tfile.write(uploaded_video.read())
                     tfile.flush()
                     
-                    _ss.modeb_keyframes = extract_smart_keyframes(tfile.name, num_frames=6, target_size=(512, 512))
+                    _ss.modeb_keyframes = extract_smart_keyframes(tfile.name, num_frames=num_extract, target_size=(512, 512))
                     tfile.close()
                     os.unlink(tfile.name)
                     
                     _ss.modeb_sam2_done = False
                     _ss.modeb_lrm_done = False
-                st.success("✅ 고품질 핵심 프레임 6장 추출 완료!")
+                st.success(f"✅ 고품질 핵심 프레임 {num_extract}장 추출 완료!")
 
     with tab2:
         st.info("객체의 앞, 뒤, 좌, 우 등을 찍은 사진을 4~6장 한꺼번에 업로드하세요.")
@@ -392,52 +388,69 @@ elif _ss.mode == "B":
                 st.success(f"✅ {len(imgs)}장의 핵심 프레임 등록 완료!")
 
     if _ss.modeb_keyframes:
-        st.write("**[확보된 핵심 프레임]**")
+        st.markdown("**[확보된 핵심 프레임]** 💡 **첫 번째 프레임(프레임 1)**이 3D 기준(정면)이 됩니다. 화살표를 눌러 순서를 변경하세요.")
         cols = st.columns(len(_ss.modeb_keyframes))
+        
         for idx, img in enumerate(_ss.modeb_keyframes):
-            cols[idx].image(img, width="stretch", caption=f"프레임 {idx+1}")
+            with cols[idx]:
+                if idx == 0:
+                    st.markdown("<p style='text-align: center; color: #ff4b4b; font-weight: bold; margin-bottom: 5px;'>⭐️ 메인 뷰</p>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<p style='text-align: center; color: gray; margin-bottom: 5px;'>서브 뷰 (참고용)</p>", unsafe_allow_html=True)
+                
+                st.image(img, width="stretch")
+                
+                btn_cols = st.columns(2)
+                with btn_cols[0]:
+                    if st.button("◀", key=f"left_{idx}", disabled=(idx == 0), use_container_width=True):
+                        _ss.modeb_keyframes[idx], _ss.modeb_keyframes[idx-1] = _ss.modeb_keyframes[idx-1], _ss.modeb_keyframes[idx]
+                        
+                        # 🔥 최적화: 메인 뷰가 바뀌었으므로 누끼 작업과 3D 엔진을 모두 초기화합니다.
+                        _ss.modeb_sam2_done = False
+                        _ss.modeb_segmented_frames = []
+                        _ss.modeb_lrm_done = False 
+                        st.rerun()
+                        
+                with btn_cols[1]:
+                    if st.button("▶", key=f"right_{idx}", disabled=(idx == len(_ss.modeb_keyframes)-1), use_container_width=True):
+                        _ss.modeb_keyframes[idx], _ss.modeb_keyframes[idx+1] = _ss.modeb_keyframes[idx+1], _ss.modeb_keyframes[idx]
+                        
+                        _ss.modeb_sam2_done = False
+                        _ss.modeb_segmented_frames = []
+                        _ss.modeb_lrm_done = False
+                        st.rerun()
         
         st.divider()
         
-        st.subheader("Step 2: 일괄 세그멘테이션 (Hybrid AI)")
-        if st.button("모든 프레임 배경 제거", key="modeb_sam2") or _ss.modeb_sam2_done:
+        # 🔥 최적화된 Step 2: 오직 '메인 뷰(프레임 1)' 1장만 작업합니다!
+        st.subheader("Step 2: 메인 뷰 집중 세그멘테이션 (초고속 🚀)")
+        if st.button("메인 프레임(1번)만 배경 제거", key="modeb_sam2") or _ss.modeb_sam2_done:
             if not _ss.modeb_sam2_done:
                 predictor, device = load_sam2_model()
-                
-                # [성능 최적화] Rembg 세션은 반복문 밖에서 딱 한 번만 켭니다!
                 rembg_session = new_session("u2net")
                 
-                processed_frames = []
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for idx, frame_img in enumerate(_ss.modeb_keyframes):
-                    status_text.text(f"프레임 {idx+1}/{len(_ss.modeb_keyframes)} 하이브리드 배경 제거 중...")
-                    img_rgb = np.array(frame_img)
+                with st.spinner("메인 프레임 1장 집중 배경 제거 중... (약 0.5초)"):
+                    # 6장 반복문(for)을 과감히 삭제하고 0번째 프레임만 가져옵니다!
+                    main_frame = _ss.modeb_keyframes[0]
+                    img_rgb = np.array(main_frame)
                     predictor.set_image(img_rgb)
                     h, w, _ = img_rgb.shape
                     
-                    # 1. Rembg로 마스크 1초 컷 추출
                     rembg_mask = remove(img_rgb, session=rembg_session, only_mask=True)
-                    
-                    # 2. 박스 계산
                     contours, _ = cv2.findContours(rembg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if contours:
                         c = max(contours, key=cv2.contourArea)
                         x, y, bw, bh = cv2.boundingRect(c)
-                        # 박스를 여유 있게 주어 신발 코/뒷꿈치 잘림 완벽 방지
                         box = np.array([[max(0, x-10), max(0, y-10), min(w, x+bw+10), min(h, y+bh+10)]])
                     else:
                         box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
                     
-                    # 3. 완벽한 박스로 SAM 2 구동
                     masks, _, _ = predictor.predict(
                         point_coords=None, point_labels=None, box=box, multimask_output=False,
                     )
                     mask_2d = masks.squeeze()
                     alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
                     
-                    # OpenCV 찌꺼기 제거
                     contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if contours:
                         largest_contour = max(contours, key=cv2.contourArea)
@@ -452,25 +465,23 @@ elif _ss.mode == "B":
                     img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
                     img_rgba[:, :, :3] = img_rgb
                     img_rgba[:, :, 3] = alpha_channel
-                    processed_frames.append(Image.fromarray(img_rgba, "RGBA"))
                     
-                    progress_bar.progress((idx + 1) / len(_ss.modeb_keyframes))
+                    # 결과를 단 1장만 리스트에 담아 3D 엔진으로 넘깁니다.
+                    _ss.modeb_segmented_frames = [Image.fromarray(img_rgba, "RGBA")]
+                    _ss.modeb_sam2_done = True
                 
-                status_text.empty()
-                _ss.modeb_segmented_frames = processed_frames
-                _ss.modeb_sam2_done = True
-                
-                # 메모리 정리
                 del predictor
                 del rembg_session
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-            st.success("✅ 모든 프레임 누끼 및 VRAM 정리 완료!")
-            cols = st.columns(len(_ss.modeb_segmented_frames))
-            for idx, img in enumerate(_ss.modeb_segmented_frames):
-                cols[idx].image(img, width="stretch", caption=f"투명 프레임 {idx+1}")
+            st.success("✅ 메인 뷰 누끼 추출 완료! (불필요한 연산 대폭 절감)")
+            
+            # UI에서도 완성된 1장만 예쁘게 중앙에 띄워줍니다.
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(_ss.modeb_segmented_frames[0], width="stretch", caption="3D 복원 기준이 될 투명 메인 뷰")
             
             st.divider()
             
@@ -493,7 +504,7 @@ elif _ss.mode == "B":
                         with st.spinner("✨ 3D 메쉬 표면 정밀 평탄화 작업 중..."):
                             import open3d as o3d
                             mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
-                            mesh = mesh.filter_smooth_taubin(number_of_iterations=15)
+                            mesh = mesh.filter_smooth_taubin(number_of_iterations=3) # 다림질 횟수는 적게, 디테일 최대한 살리는 방향으로
                             mesh.compute_vertex_normals()
                             o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
                             
