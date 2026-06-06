@@ -14,11 +14,13 @@
 # ============================================================================
 
 # --- Base UI & Utils ---
-streamlit
+# 🔥 캔버스(streamlit-drawable-canvas) 호환성을 위해 1.35.0 버전으로 강제 고정합니다.
+streamlit==1.35.0
 opencv-python
 numpy
 Pillow
 psutil
+streamlit-drawable-canvas
 
 # --- AI Core & PyTorch ---
 torch

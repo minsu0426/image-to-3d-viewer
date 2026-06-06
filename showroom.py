@@ -45,381 +45,296 @@ function parseOBJ(text) {
 def get_obj_list() -> list:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     mesh_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
-    if not os.path.exists(mesh_dir):
-        return []
+    if not os.path.exists(mesh_dir): return []
     return sorted(glob.glob(os.path.join(mesh_dir, "*.obj")), reverse=True)
 
-
 def read_obj_b64(obj_path: str) -> str:
-    with open(obj_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    with open(obj_path, "r", encoding="utf-8") as f: content = f.read()
     return base64.b64encode(content.encode("utf-8")).decode("utf-8")
 
 params = st.query_params
 single_obj_path = params.get("obj", "")
 
-# ---------------------------------------------------------
-# 모드 [1] 단일 객체 뷰어 모드
-# ---------------------------------------------------------
-if single_obj_path:
-    single_obj_path = single_obj_path.replace("/", os.sep)
-    
-    if not os.path.exists(single_obj_path):
-        st.error(f"❌ 파일을 찾을 수 없습니다: `{single_obj_path}`")
-        st.stop()
-        
-    st.title("🧊 3D Single Viewer")
-    st.caption(f"이 장치는 메인 파일 내부 미리보기(iframe)로 구동됩니다. 파일명: `{os.path.basename(single_obj_path)}`")
-    
-    obj_b64 = read_obj_b64(single_obj_path)
-    
-    html_content = f"""<!DOCTYPE html>
-    <html lang="ko">
-    <head>
-      <meta charset="UTF-8"/>
-      <style>
-        * {{ margin:0; padding:0; box-sizing:border-box; }}
-        html, body {{ width:100%; height:100%; background:#0d0d14; overflow:hidden; }}
-        canvas {{ display:block; width:100%; height:100%; outline:none; }}
-        #hint {{ position:fixed; bottom:12px; left:50%; transform:translateX(-50%); color:rgba(180,180,220,0.6); font:12px sans-serif; pointer-events:none; z-index:5; background:rgba(0,0,0,0.5); padding:8px 16px; border-radius:20px; }}
-      </style>
-    </head>
-    <body>
-    <canvas id="c"></canvas>
-    <div id="hint">좌클릭 드래그: 회전 | 우클릭 드래그: 이동 | 스크롤: 초정밀 줌</div>
-    <script type="importmap">{{
-        "imports": {{
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-        }}
-    }}</script>
-    <script type="module">
-    import * as THREE from 'three';
-    import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js';
-    
-    const objText = new TextDecoder().decode(Uint8Array.from(atob("{obj_b64}"), c=>c.charCodeAt(0)));
-    {JS_PARSE_OBJ}
-    
-    const canvas=document.getElementById('c');
-    const renderer=new THREE.WebGLRenderer({{canvas,antialias:true}});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    
-    const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0d0d14);
-    const camera=new THREE.PerspectiveCamera(45,window.innerWidth/window.innerHeight,0.01,200);
-    camera.position.set(0,0.5,3.5);
-    
-    const orbit = new OrbitControls(camera, renderer.domElement);
-    orbit.enableDamping = true;
-    orbit.dampingFactor = 0.05;
-    orbit.autoRotate = true; 
-    orbit.autoRotateSpeed = 2.0;
-    orbit.minDistance = 1;
-    orbit.maxDistance = 30;
-    
-    // 💡 1. 기본 줌 완전히 끄기
-    orbit.enableZoom = false; 
-    
-    // 💡 2. 수동 줌 이벤트 가로채기 (단일 뷰어)
-    canvas.addEventListener('wheel', function(event) {{
-        event.preventDefault();
-        const ZOOM_SENSITIVITY = 0.0015; // 휠 1틱당 0.15% 스케일 이동
-        const distance = camera.position.distanceTo(orbit.target);
-        let scale = 1 + (event.deltaY * ZOOM_SENSITIVITY);
-        let newDistance = distance * scale;
-        newDistance = Math.max(orbit.minDistance, Math.min(orbit.maxDistance, newDistance));
-        const direction = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
-        camera.position.copy(orbit.target).addScaledVector(direction, newDistance);
-        orbit.update();
-    }}, {{ passive: false }});
-    
-    scene.add(new THREE.AmbientLight(0xffffff,0.4));
-    const dir=new THREE.DirectionalLight(0xffffff,1.2); dir.position.set(5,8,5); scene.add(dir);
-    
-    const geo=parseOBJ(objText);
-    geo.computeBoundingBox();
-    const ctr=new THREE.Vector3(); geo.boundingBox.getCenter(ctr); geo.translate(-ctr.x,-ctr.y,-ctr.z);
-    const sz=new THREE.Vector3(); geo.boundingBox.getSize(sz); geo.scale(...Array(3).fill(1.8/Math.max(sz.x,sz.y,sz.z)));
-    
-    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({{color:0xccccee, metalness:0.15, roughness:0.6, side:THREE.DoubleSide}}));
-    scene.add(mesh);
-    
-    canvas.addEventListener('mousedown', () => orbit.autoRotate = false);
-    
-    (function animate(){{
-      requestAnimationFrame(animate);
-      orbit.update();
-      renderer.render(scene,camera);
-    }})();
-    window.addEventListener('resize',()=>{{ renderer.setSize(window.innerWidth,window.innerHeight); camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); }});
-    </script>
-    </body>
-    </html>"""
-    st.components.v1.html(html_content, height=650, scrolling=False)
+is_single = bool(single_obj_path)
 
-# ---------------------------------------------------------
-# 모드 [2] 다중 가상 쇼룸 모드
-# ---------------------------------------------------------
+if is_single:
+    single_obj_path = single_obj_path.replace("/", os.sep)
+    if not os.path.exists(single_obj_path): st.stop()
+    st.title("🧊 3D Single Viewer")
+    obj_data = [{"id": 0, "name": "single", "b64": read_obj_b64(single_obj_path), "x": 0, "z": 0}]
 else:
     st.title("🏠 3D Virtual Showroom")
-    st.caption("생성된 가구 및 객체들을 하나의 3D 가상 쇼룸에 동시 배치하고 자유롭게 인테리어 레이아웃을 조절하세요.")
-    
     base_dir = os.path.dirname(os.path.abspath(__file__))
     mesh_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
-    os.makedirs(mesh_dir, exist_ok=True)
-    
-    with st.expander("➕ 외부 3D 모델(.obj) 쇼룸에 직접 추가하기", expanded=False):
-        uploaded_obj = st.file_uploader("인터넷에서 다운받거나 직접 만든 .obj 파일을 업로드하면 목록에 바로 추가됩니다.", type=["obj"])
-        if uploaded_obj is not None:
-            save_path = os.path.join(mesh_dir, uploaded_obj.name)
-            with open(save_path, "wb") as f:
-                f.write(uploaded_obj.getbuffer())
-            st.success(f"✅ `{uploaded_obj.name}` 업로드 성공! 아래 목록에서 체크해주세요.")
-    
-    st.divider()
-    
     obj_files = get_obj_list()
-    if not obj_files:
-        st.warning("⚠️ 배치할 3D 메쉬 파일이 없습니다. 앱에서 변환하거나 바로 위에서 직접 업로드해 주세요.")
-        st.stop()
-        
-    st.subheader("📦 가상 쇼룸에 배치할 가구 선택")
+    
     selected = []
     cols = st.columns(4)
     for i, f in enumerate(obj_files):
-        fname = os.path.basename(f)
-        if cols[i % 4].checkbox(fname, key=f"chk_{i}", value=(i < 3)):
+        if cols[i % 4].checkbox(os.path.basename(f), key=f"chk_{i}", value=(i < 3)):
             selected.append(f)
             
-    if not selected:
-        st.info("쇼룸에 렌더링할 오브젝트를 위의 체크박스에서 1개 이상 선택해 주세요.")
-        st.stop()
-        
-    objects_data = []
-    for i, path in enumerate(selected):
-        objects_data.append({
-            "id": i,
-            "name": os.path.basename(path),
-            "b64": read_obj_b64(path),
-            "x": (i % 3) * 2.5 - 2.5,
-            "z": (i // 3) * 2.5 - 2.5
-        })
-        
-    objects_json = json.dumps(objects_data)
+    if not selected: st.stop()
+    obj_data = [{"id": i, "name": os.path.basename(p), "b64": read_obj_b64(p), "x": (i%3)*2.5-2.5, "z": (i//3)*2.5-2.5} for i, p in enumerate(selected)]
+
+objects_json = json.dumps(obj_data)
+
+# 🔥 사용자 친화적 HTML UI 패널 + HDRI / 컨트롤러 결합
+html_content = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <style>
+    * {{ margin:0; padding:0; box-sizing:border-box; }}
+    html, body {{ width:100%; height:100%; background:#111; overflow:hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }}
+    canvas {{ display:block; outline: none; }}
     
-    html_content = f"""<!DOCTYPE html>
-    <html lang="ko">
-    <head>
-      <meta charset="UTF-8"/>
-      <style>
-        * {{ margin:0; padding:0; box-sizing:border-box; }}
-        html, body {{ width:100%; height:100%; background:#0d0d14; overflow:hidden; font-family:sans-serif; }}
-        canvas {{ display:block; outline: none; }}
-        
-        #ui {{ position:absolute; top:20px; right:20px; width:220px; background:rgba(30,30,50,0.95); border:1px solid rgba(100,100,200,0.4); border-radius:12px; padding:16px; z-index:20; color:#eee; box-shadow: 0 8px 24px rgba(0,0,0,0.6); backdrop-filter: blur(4px); }}
-        #ui h3 {{ color:#bbbbff; font-size:14px; margin-bottom:12px; text-align:center; }}
-        .btn-group {{ display: flex; flex-direction: column; gap: 8px; }}
-        button {{ background: #2a2a44; color: #fff; border: 1px solid #445; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: 0.2s; }}
-        button:hover {{ background: #3a3a5a; border-color:#668; }}
-        button.active {{ background: #4a4aff; border-color: #7777ff; font-weight: bold; box-shadow: 0 0 10px rgba(74,74,255,0.4); }}
-        
-        .color-panel {{ margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; }}
-        .color-panel span {{ font-size: 13px; font-weight: bold; color: #ddd; }}
-        #color-picker {{ cursor: pointer; width: 50px; height: 28px; border: none; border-radius: 4px; background: transparent; opacity: 0.5; transition: 0.2s; }}
-        #color-picker:not([disabled]) {{ opacity: 1.0; }}
-        
-        #hint {{ position:fixed; bottom:16px; left:50%; transform:translateX(-50%); color:rgba(220,220,255,0.8); font-size:12px; background:rgba(0,0,0,0.6); padding:10px 20px; border-radius:24px; pointer-events:none; border: 1px solid rgba(255,255,255,0.1); }}
-      </style>
-    </head>
-    <body>
-    <canvas id="c"></canvas>
+    /* 기존 스타일 유지 & 개선된 컨트롤 패널 */
+    #ui {{ position:absolute; top:20px; right:20px; width:260px; background:rgba(30,30,45,0.9); border:1px solid rgba(100,100,200,0.3); border-radius:12px; padding:16px; z-index:20; color:#eee; box-shadow: 0 8px 32px rgba(0,0,0,0.8); backdrop-filter: blur(8px); }}
+    #ui h3 {{ color:#bbbbff; font-size:14px; margin-bottom:12px; font-weight:600; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; }}
     
-    <div id="ui">
-        <h3>🖱️ 마우스 컨트롤러</h3>
-        <div class="btn-group">
-            <button id="btn-t" class="active">✋ 이동 (W)</button>
-            <button id="btn-s">🔍 크기 (E)</button>
-            <button id="btn-r">🔄 회전 (R)</button>
-        </div>
-        
-        <div class="color-panel">
-            <span>🎨 색상 변경</span>
-            <input type="color" id="color-picker" value="#ffffff" disabled title="객체를 선택하면 활성화됩니다">
-        </div>
-        
-        <p style="margin-top:16px; font-size:12px; color:#9ab; line-height:1.6; text-align:center;">
-            <b>객체 클릭</b> : 선택 및 조작<br>
-            <b>허공 클릭</b> : 선택 해제
-        </p>
+    .btn-group {{ display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }}
+    button {{ background: #2a2a44; color: #fff; border: 1px solid #445; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: 0.2s; }}
+    button:hover {{ background: #3a3a5a; border-color:#668; }}
+    button.active {{ background: #4a4aff; border-color: #7777ff; font-weight: bold; box-shadow: 0 0 10px rgba(74,74,255,0.4); }}
+    
+    .control-group {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
+    .control-group span {{ font-size: 12px; font-weight: 500; color: #ccc; }}
+    .control-group input[type=range] {{ width: 120px; cursor: pointer; }}
+    .control-group input[type=color] {{ cursor: pointer; width: 40px; height: 24px; border: none; border-radius: 4px; background: transparent; }}
+    
+    input:disabled {{ opacity: 0.3; cursor: not-allowed; }}
+    
+    #hint {{ position:fixed; bottom:16px; left:50%; transform:translateX(-50%); color:rgba(220,220,255,0.8); font-size:12px; background:rgba(0,0,0,0.6); padding:10px 20px; border-radius:24px; pointer-events:none; border: 1px solid rgba(255,255,255,0.1); }}
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+    <h3>🖱️ 객체 컨트롤 (W/E/R)</h3>
+    <div class="btn-group">
+        <button id="btn-t" class="active">✋ 이동 (W)</button>
+        <button id="btn-s">🔍 크기 (E)</button>
+        <button id="btn-r">🔄 회전 (R)</button>
     </div>
-    <div id="hint">좌클릭 드래그: 시점 회전 | 우클릭 드래그: 화면 이동 | 스크롤: 초정밀 줌</div>
     
-    <script type="importmap">{{
-        "imports": {{
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-        }}
-    }}</script>
+    <h3>🎨 재질 세팅</h3>
+    <div class="control-group">
+        <span>색상 (Color)</span>
+        <input type="color" id="ctrl-color" value="#cccccc" disabled>
+    </div>
+    <div class="control-group">
+        <span>거칠기 (가죽느낌)</span>
+        <input type="range" id="ctrl-rough" min="0" max="1" step="0.05" value="0.5" disabled>
+    </div>
+    <div class="control-group">
+        <span>금속성 (유광느낌)</span>
+        <input type="range" id="ctrl-metal" min="0" max="1" step="0.05" value="0.1" disabled>
+    </div>
     
-    <script type="module">
-    import * as THREE from 'three';
-    import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js';
-    import {{ TransformControls }} from 'three/addons/controls/TransformControls.js';
-    
-    const OBJECTS = {objects_json};
-    {JS_PARSE_OBJ}
-    
-    const canvas = document.getElementById('c');
-    const renderer = new THREE.WebGLRenderer({{canvas, antialias:true}});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    
-    const scene = new THREE.Scene(); 
-    scene.background = new THREE.Color(0x0d0d14); 
-    scene.fog = new THREE.Fog(0x0d0d14, 40, 150);
-    
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 500);
-    camera.position.set(0, 6, 14);
-    
-    const orbit = new OrbitControls(camera, renderer.domElement);
-    orbit.enableDamping = true;
-    orbit.dampingFactor = 0.05;
-    orbit.maxPolarAngle = Math.PI / 2 - 0.02; 
-    orbit.minDistance = 2;   
-    orbit.maxDistance = 60;  
-    
-    // 💡 1. 꼬이는 기본 줌 기능 완전히 비활성화 (쇼룸 모드)
-    orbit.enableZoom = false; 
-    
-    // 💡 2. 완벽하게 통제되는 물리 엔진 기반 수동 줌 가로채기
-    canvas.addEventListener('wheel', function(event) {{
-        event.preventDefault(); // 브라우저 스크롤 등 모든 간섭 차단
-        
-        const ZOOM_SENSITIVITY = 0.0015; // ★ 이 숫자를 수정하여 감도를 마음대로 바꿀 수 있습니다! (0.001 = 더 느려짐)
-        
-        const distance = camera.position.distanceTo(orbit.target);
-        let scale = 1 + (event.deltaY * ZOOM_SENSITIVITY);
-        let newDistance = distance * scale;
-        
-        newDistance = Math.max(orbit.minDistance, Math.min(orbit.maxDistance, newDistance));
-        
-        const direction = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
-        camera.position.copy(orbit.target).addScaledVector(direction, newDistance);
-        orbit.update();
-    }}, {{ passive: false }});
-    
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.5); 
-    dir.position.set(10, 15, 10); 
-    dir.castShadow = true; 
-    dir.shadow.mapSize.width = 2048; 
-    dir.shadow.mapSize.height = 2048;
-    scene.add(dir);
-    
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80,80), new THREE.MeshStandardMaterial({{color:0x151525, roughness:0.8}}));
-    floor.rotation.x = -Math.PI/2; 
-    floor.position.y = -1; 
-    floor.receiveShadow = true; 
-    scene.add(floor);
-    
-    const grid = new THREE.GridHelper(80, 80, 0x333355, 0x1a1a33); 
-    grid.position.y = -0.99; 
-    scene.add(grid);
-    
-    const COLORS = [0x6688ff, 0xff8866, 0x66ff88, 0xffcc44, 0xff66aa];
-    const interactableMeshes = [];
-    
-    for (const obj of OBJECTS) {{
-      const geo = parseOBJ(new TextDecoder().decode(Uint8Array.from(atob(obj.b64), c=>c.charCodeAt(0))));
-      geo.computeBoundingBox();
-      const ctr = new THREE.Vector3(); geo.boundingBox.getCenter(ctr); geo.translate(-ctr.x, -ctr.y, -ctr.z);
-      const sz = new THREE.Vector3(); geo.boundingBox.getSize(sz); geo.scale(...Array(3).fill(2.0/Math.max(sz.x, sz.y, sz.z)));
-      
-      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({{color:COLORS[obj.id%COLORS.length], roughness:0.5, metalness:0.1, side:THREE.DoubleSide}}));
-      mesh.castShadow = true;
-      mesh.receiveShadow = true; 
-      mesh.position.set(obj.x, 0, obj.z);
-      scene.add(mesh); 
-      interactableMeshes.push(mesh);
+    <h3 style="margin-top:16px;">🌍 조명 및 스튜디오</h3>
+    <div class="control-group">
+        <span>조명 밝기</span>
+        <input type="range" id="ctrl-expo" min="0.1" max="3" step="0.1" value="1.0">
+    </div>
+    <div class="control-group" style="justify-content: flex-start; gap: 10px;">
+        <input type="checkbox" id="ctrl-autorotate" {'checked' if is_single else ''}>
+        <label for="ctrl-autorotate" style="font-size:12px; color:#ccc; cursor:pointer;">시네마틱 턴테이블</label>
+    </div>
+    <div class="control-group">
+        <span>회전 속도</span>
+        <input type="range" id="ctrl-speed" min="0.5" max="10" step="0.5" value="2.0">
+    </div>
+</div>
+
+<div id="hint">객체 클릭: 선택 | 허공 클릭: 해제 | 휠: 초정밀 줌 | 우클릭 드래그: 화면 이동</div>
+
+<script type="importmap">{{
+    "imports": {{
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
     }}
+}}</script>
+
+<script type="module">
+import * as THREE from 'three';
+import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js';
+import {{ TransformControls }} from 'three/addons/controls/TransformControls.js';
+import {{ RoomEnvironment }} from 'three/addons/environments/RoomEnvironment.js';
+
+const OBJECTS = {objects_json};
+const IS_SINGLE = {'true' if is_single else 'false'};
+{JS_PARSE_OBJ}
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({{canvas, antialias:true}});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+const scene = new THREE.Scene(); 
+scene.background = new THREE.Color(0x111111);
+
+// 🌟 고급 HDRI 조명
+const pmremGenerator = new THREE.PMREMGenerator(renderer);
+scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 500);
+camera.position.set(0, IS_SINGLE ? 1 : 6, IS_SINGLE ? 4 : 14);
+
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+orbit.dampingFactor = 0.05;
+orbit.enableZoom = false; 
+orbit.autoRotate = IS_SINGLE; // 단일모드면 자동 켜짐
+
+// 정밀 마우스 줌
+canvas.addEventListener('wheel', function(event) {{
+    event.preventDefault();
+    const distance = camera.position.distanceTo(orbit.target);
+    let scale = 1 + (event.deltaY * 0.0015);
+    const direction = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
+    camera.position.copy(orbit.target).addScaledVector(direction, distance * scale);
+    orbit.update();
+}}, {{ passive: false }});
+
+// 물리 조명 (그림자용)
+const dirLight = new THREE.DirectionalLight(0xffffff, 2.0); 
+dirLight.position.set(5, 10, 7); 
+dirLight.castShadow = true; 
+dirLight.shadow.mapSize.width = 2048; 
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.bias = -0.0001;
+scene.add(dirLight);
+
+// 바닥 및 그리드
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({{color:0x1a1a1a, roughness:0.1, metalness:0.8}}));
+floor.rotation.x = -Math.PI/2; floor.position.y = -1; floor.receiveShadow = true; 
+scene.add(floor);
+
+const grid = new THREE.GridHelper(100, 100, 0x333333, 0x222222); 
+grid.position.y = -0.99; 
+scene.add(grid);
+
+const meshes = [];
+let activeMesh = null;
+
+// 객체 로드
+for (const obj of OBJECTS) {{
+    const geo = parseOBJ(new TextDecoder().decode(Uint8Array.from(atob(obj.b64), c=>c.charCodeAt(0))));
+    geo.computeBoundingBox();
+    const ctr = new THREE.Vector3(); geo.boundingBox.getCenter(ctr); geo.translate(-ctr.x, -ctr.y, -ctr.z);
+    const sz = new THREE.Vector3(); geo.boundingBox.getSize(sz); geo.scale(...Array(3).fill(2.0/Math.max(sz.x, sz.y, sz.z)));
     
-    const transformControl = new TransformControls(camera, renderer.domElement);
-    transformControl.addEventListener('dragging-changed', function (event) {{
-        orbit.enabled = !event.value;
-    }});
-    scene.add(transformControl);
+    const mat = new THREE.MeshStandardMaterial({{ color: 0xcccccc, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide }});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true; mesh.receiveShadow = true; 
+    mesh.position.set(obj.x, 0, obj.z);
+    scene.add(mesh); meshes.push(mesh);
+    if(IS_SINGLE) activeMesh = mesh;
+}}
+
+// ==========================================
+// UI 및 조작(Transform) 로직 바인딩
+// ==========================================
+const tControl = new TransformControls(camera, renderer.domElement);
+tControl.addEventListener('dragging-changed', e => orbit.enabled = !e.value);
+scene.add(tControl);
+
+const elColor = document.getElementById('ctrl-color');
+const elRough = document.getElementById('ctrl-rough');
+const elMetal = document.getElementById('ctrl-metal');
+const elExpo = document.getElementById('ctrl-expo');
+const elAutoRot = document.getElementById('ctrl-autorotate');
+const elSpeed = document.getElementById('ctrl-speed');
+
+// 객체 선택 함수
+function selectMesh(mesh) {{
+    activeMesh = mesh;
+    if (activeMesh && !IS_SINGLE) tControl.attach(activeMesh);
     
+    const isActive = !!activeMesh;
+    elColor.disabled = !isActive;
+    elRough.disabled = !isActive;
+    elMetal.disabled = !isActive;
+    
+    if(isActive) {{
+        elColor.value = '#' + activeMesh.material.color.getHexString();
+        elRough.value = activeMesh.material.roughness;
+        elMetal.value = activeMesh.material.metalness;
+    }} else {{
+        elColor.value = '#cccccc';
+    }}
+}}
+
+// 단일 모드일 때 기본 활성화
+if (IS_SINGLE && activeMesh) selectMesh(activeMesh);
+
+// 마우스 클릭(Raycaster) 로직
+if (!IS_SINGLE) {{
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
-    let selectedObject = null;
     
-    const colorPicker = document.getElementById('color-picker');
-    colorPicker.addEventListener('input', (event) => {{
-        if (selectedObject && selectedObject.material) {{
-            selectedObject.material.color.set(event.target.value);
-        }}
-    }});
-    
-    canvas.addEventListener('pointerdown', function(event) {{
-        if (transformControl.dragging) return; 
-        
-        const rect = canvas.getBoundingClientRect();
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
+    canvas.addEventListener('pointerdown', e => {{
+        if(tControl.dragging) return;
+        mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(interactableMeshes, true);
+        const intersects = raycaster.intersectObjects(meshes);
         
-        if (intersects.length > 0) {{
-            selectedObject = intersects[0].object;
-            transformControl.attach(selectedObject);
-            
-            colorPicker.disabled = false;
-            colorPicker.value = '#' + selectedObject.material.color.getHexString();
-        }} else {{
-            transformControl.detach();
-            selectedObject = null;
-            
-            colorPicker.disabled = true;
-            colorPicker.value = '#ffffff';
-        }}
+        if(intersects.length > 0) selectMesh(intersects[0].object);
+        else {{ tControl.detach(); selectMesh(null); }}
     }});
-    
-    const btnT = document.getElementById('btn-t');
-    const btnS = document.getElementById('btn-s');
-    const btnR = document.getElementById('btn-r');
-    
-    function setMode(mode) {{
-        transformControl.setMode(mode);
-        btnT.className = mode === 'translate' ? 'active' : '';
-        btnS.className = mode === 'scale' ? 'active' : '';
-        btnR.className = mode === 'rotate' ? 'active' : '';
-    }}
-    
-    btnT.addEventListener('click', () => setMode('translate'));
-    btnS.addEventListener('click', () => setMode('scale'));
-    btnR.addEventListener('click', () => setMode('rotate'));
-    
-    window.addEventListener('keydown', function(event) {{
-        switch (event.key.toLowerCase()) {{
-            case 'w': setMode('translate'); break; 
-            case 'e': setMode('scale'); break;     
-            case 'r': setMode('rotate'); break;    
-        }}
-    }});
-    
-    (function animate(){{ 
-        requestAnimationFrame(animate); 
-        orbit.update(); 
-        renderer.render(scene, camera); 
-    }})();
-    
-    window.addEventListener('resize', () => {{ 
-        renderer.setSize(window.innerWidth, window.innerHeight); 
-        camera.aspect = window.innerWidth / window.innerHeight; 
-        camera.updateProjectionMatrix(); 
-    }});
-    </script>
-    </body>
-    </html>"""
-    st.components.v1.html(html_content, height=800, scrolling=False)
+}}
+
+// 재질 슬라이더 이벤트 연결
+elColor.addEventListener('input', e => {{ if(activeMesh) activeMesh.material.color.set(e.target.value); }});
+elRough.addEventListener('input', e => {{ if(activeMesh) activeMesh.material.roughness = parseFloat(e.target.value); }});
+elMetal.addEventListener('input', e => {{ if(activeMesh) activeMesh.material.metalness = parseFloat(e.target.value); }});
+
+// 환경 설정 연결
+elExpo.addEventListener('input', e => {{ renderer.toneMappingExposure = parseFloat(e.target.value); }});
+elAutoRot.addEventListener('change', e => {{ orbit.autoRotate = e.target.checked; }});
+elSpeed.addEventListener('input', e => {{ orbit.autoRotateSpeed = parseFloat(e.target.value); }});
+
+// 변환 모드(W, E, R) 연결
+const btnT = document.getElementById('btn-t');
+const btnS = document.getElementById('btn-s');
+const btnR = document.getElementById('btn-r');
+
+function setTransformMode(mode) {{
+    tControl.setMode(mode);
+    btnT.className = mode === 'translate' ? 'active' : '';
+    btnS.className = mode === 'scale' ? 'active' : '';
+    btnR.className = mode === 'rotate' ? 'active' : '';
+}}
+
+btnT.addEventListener('click', () => setTransformMode('translate'));
+btnS.addEventListener('click', () => setTransformMode('scale'));
+btnR.addEventListener('click', () => setTransformMode('rotate'));
+
+window.addEventListener('keydown', e => {{
+    if(e.key.toLowerCase() === 'w') setTransformMode('translate');
+    if(e.key.toLowerCase() === 'e') setTransformMode('scale');
+    if(e.key.toLowerCase() === 'r') setTransformMode('rotate');
+}});
+
+// 렌더링 루프
+(function animate(){{ 
+    requestAnimationFrame(animate); 
+    orbit.update(); 
+    renderer.render(scene, camera); 
+}})();
+
+window.addEventListener('resize', () => {{ 
+    renderer.setSize(window.innerWidth, window.innerHeight); 
+    camera.aspect = window.innerWidth / window.innerHeight; 
+    camera.updateProjectionMatrix(); 
+}});
+</script>
+</body>
+</html>"""
+st.components.v1.html(html_content, height=800 if not is_single else 650, scrolling=False)

@@ -11,43 +11,48 @@ import psutil
 import gc
 import cv2
 import tempfile
+import glob
 
-# Rembg Library (추가됨)
+# 인터랙티브 마스크 편집기
+try:
+    from streamlit_drawable_canvas import st_canvas
+except ImportError:
+    st.error("🚨 캔버스 기능이 필요합니다. 터미널에서 `pip install streamlit-drawable-canvas`를 실행해주세요.")
+    st.stop()
+
+# Rembg & SAM 2 Libraries
 from rembg import remove, new_session
-
-# SAM 2 Libraries
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 # =========================================================
 # 1. Page Configuration & Session State
 # =========================================================
-st.set_page_config(
-    page_title="Image to 3D Viewer",
-    page_icon="🧊",
-    layout="centered",
-)
+st.set_page_config(page_title="3D Studio Pro", page_icon="🧊", layout="wide")
 
 _ss = st.session_state
 
 def _init(key, val):
-    if key not in _ss:
-        _ss[key] = val
+    if key not in _ss: _ss[key] = val
 
 _init("mode", None)            
+_init("step", 1)
+_init("mesh_path", None)
+
+# Mode A States
+_init("modea_image", None)
 _init("sam2_done", False)
 _init("trellis_done", False) 
 _init("extracted_image", None) 
-_init("mesh_path", None)
-_init("last_uploaded", None)
 
+# Mode B States
 _init("modeb_keyframes", [])
 _init("modeb_segmented_frames", [])
 _init("modeb_sam2_done", False)
 _init("modeb_lrm_done", False)
 
 # =========================================================
-# 2. AI Model Loaders (Cached Resource)
+# 2. Helper Functions & AI Model
 # =========================================================
 @st.cache_resource
 def load_sam2_model():
@@ -56,45 +61,28 @@ def load_sam2_model():
     checkpoint_dir = os.path.normpath(os.path.join(base_dir, "checkpoints"))
     sam2_checkpoint = os.path.normpath(os.path.join(checkpoint_dir, "sam2.1_hiera_small.pt"))
     
-    if not os.path.exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir)
-        
+    if not os.path.exists(checkpoint_dir): os.makedirs(checkpoint_dir)
     if not os.path.exists(sam2_checkpoint):
         import ssl
         ssl._create_default_https_context = ssl._create_unverified_context
         url = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt"
-        with st.spinner("SAM 2 모델 가중치 다운로드 중..."):
+        with st.spinner("SAM 2 모델 다운로드 중..."):
             urllib.request.urlretrieve(url, sam2_checkpoint)
-            st.success("SAM 2 다운로드 완료!")
             time.sleep(1)
             
     model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
     model = build_sam2(model_cfg, sam2_checkpoint, device=device)
     return SAM2ImagePredictor(model), device
 
-# =========================================================
-# 3. Helper Functions 
-# =========================================================
 def get_inference_preset():
     vm = psutil.virtual_memory()
     avail = vm.available / (1024 ** 3)
-    total = vm.total / (1024 ** 3)
-    usable = max(0.5, avail - 1.5)
-    
-    if usable < 2.5:
-        p = {"resolution": 128, "tier": "Minimal"}
-    elif usable < 6:
-        p = {"resolution": 192, "tier": "Low"}
-    elif usable < 14:
-        p = {"resolution": 256, "tier": "Medium"}
-    else:
-        p = {"resolution": 512, "tier": "High"}
-        
-    p["available_gb"] = avail
-    p["total_gb"] = total
-    return p
+    if avail < 2.5: return {"resolution": 128, "tier": "Minimal"}
+    elif avail < 6: return {"resolution": 192, "tier": "Low"}
+    elif avail < 14: return {"resolution": 256, "tier": "Medium"}
+    else: return {"resolution": 512, "tier": "High"}
 
-def extract_smart_keyframes(file_path, num_frames=6, target_size=(512, 512)):
+def extract_smart_keyframes(file_path, num_frames=8, target_size=(512, 512)):
     extracted_images = []
     if file_path.lower().endswith('.gif'):
         gif = Image.open(file_path)
@@ -103,280 +91,240 @@ def extract_smart_keyframes(file_path, num_frames=6, target_size=(512, 512)):
             while True:
                 frames.append(np.array(gif.convert("RGB")))
                 gif.seek(len(frames))
-        except EOFError:
-            pass 
-            
+        except EOFError: pass 
         total_frames = len(frames)
         if total_frames == 0: return []
-            
         interval = max(1, total_frames // num_frames)
         num_frames = min(num_frames, total_frames)
-        
         for i in range(num_frames):
-            start_frame = i * interval
-            end_frame = min((i + 1) * interval, total_frames)
-            best_frame = None
-            max_sharpness = -1
+            start_frame, end_frame = i * interval, min((i + 1) * interval, total_frames)
+            best_frame, max_sharpness = None, -1
             step = max(1, (end_frame - start_frame) // 10)
-            
             for f_idx in range(start_frame, end_frame, step):
                 frame = frames[f_idx]
                 gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
                 sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
-                
                 if sharpness > max_sharpness:
-                    max_sharpness = sharpness
-                    best_frame = frame
-                    
+                    max_sharpness, best_frame = sharpness, frame
             if best_frame is not None:
                 img = Image.fromarray(best_frame)
                 img.thumbnail(target_size, Image.Resampling.LANCZOS)
                 extracted_images.append(img)
         return extracted_images
-
+    
     cap = cv2.VideoCapture(file_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     interval = total_frames // num_frames
-    
     for i in range(num_frames):
-        start_frame = i * interval
-        end_frame = min((i + 1) * interval, total_frames)
-        best_frame = None
-        max_sharpness = -1
+        start_frame, end_frame = i * interval, min((i + 1) * interval, total_frames)
+        best_frame, max_sharpness = None, -1
         step = max(1, (end_frame - start_frame) // 10)
-        
         for f_idx in range(start_frame, end_frame, step):
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret, frame = cap.read()
             if not ret: continue
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
-            
             if sharpness > max_sharpness:
-                max_sharpness = sharpness
-                best_frame = frame
-                
+                max_sharpness, best_frame = sharpness, frame
         if best_frame is not None:
             best_frame = cv2.cvtColor(best_frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(best_frame)
             img.thumbnail(target_size, Image.Resampling.LANCZOS) 
             extracted_images.append(img)
-            
     cap.release()
     return extracted_images
 
 def _show_result(obj_path: str):
-    if not obj_path or not os.path.exists(obj_path):
-        st.error("생성된 .obj 메쉬 파일을 디스크에서 찾을 수 없습니다.")
-        return
-
+    if not obj_path or not os.path.exists(obj_path): return
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
         st.caption(f"저장 경로: `{obj_path}`")
         with open(obj_path, "rb") as f:
-            st.download_button(
-                label="⬇️ .obj 메쉬 파일 다운로드",
-                data=f.read(),
-                file_name=os.path.basename(obj_path),
-                mime="model/obj"
-            )
+            st.download_button("⬇️ .obj 메쉬 파일 다운로드", data=f.read(), file_name=os.path.basename(obj_path), mime="model/obj", use_container_width=True)
     with col2:
-        st.markdown(
-            f'<a href="http://localhost:8502" target="_blank">'
-            f'<button style="background:#22aa66;color:white;border:none;'
-            f'padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;width:100%;height:38px;">'
-            f'🏠 다중 가상 쇼룸(Showroom) 열기 (새 탭)</button></a>',
-            unsafe_allow_html=True,
-        )
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("🖥️ 로컬 3D 뷰어 미리보기 (Three.js)")
-    safe_path = urllib.parse.quote(obj_path.replace(os.sep, '/'))
-    viewer_url = f"http://localhost:8502/?obj={safe_path}"
-    components.iframe(viewer_url, height=650, scrolling=False)
+        safe_path = urllib.parse.quote(obj_path.replace(os.sep, '/'))
+        st.markdown(f'<a href="http://localhost:8502/?obj={safe_path}" target="_blank"><button style="background:#22aa66;color:white;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;width:100%;height:42px;">🏠 단일 뷰어 / 다중 쇼룸 열기 (새 탭)</button></a>', unsafe_allow_html=True)
 
 # =========================================================
-# 4. Streamlit User Interface
+# 3. Sidebar: Gallery & Status
 # =========================================================
 with st.sidebar:
-    st.subheader("🖥️ 시스템 자원 모니터링")
+    st.title("🧊 3D Studio Pro")
+    st.caption("고품질 2D-to-3D 변환 파이프라인")
+    
+    st.subheader("🖥️ 시스템 상태")
     _vm = psutil.virtual_memory()
-    st.metric("총 RAM", f"{_vm.total / 1e9:.1f} GB")
-    st.metric("가용 RAM", f"{_vm.available / 1e9:.1f} GB", delta=f"{_vm.percent}% 사용 중", delta_color="inverse")
-    gpu_info = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU Mode"
-    st.caption(f"🎮 하드웨어 가속 기기: `{gpu_info}`")
-    _preset = get_inference_preset()
-    st.caption(f"동적 할당 티어: **{_preset['tier']}**")
+    st.progress(_vm.percent / 100.0, text=f"RAM 사용량 ({_vm.percent}%)")
+    
     st.divider()
-    st.caption("독립 구동 터미널 가이드:")
-    st.code("streamlit run showroom.py --server.port 8502")
+    st.subheader("📂 내 보관함 (Gallery)")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    mesh_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
+    os.makedirs(mesh_dir, exist_ok=True)
+    history_files = sorted(glob.glob(os.path.join(mesh_dir, "*.obj")), reverse=True)[:5]
+    
+    if history_files:
+        for f in history_files:
+            fname = os.path.basename(f)
+            with st.expander(f"📦 {fname[:15]}..."):
+                with open(f, "rb") as file_data:
+                    st.download_button("⬇️ 다운로드", data=file_data, file_name=fname, key=f"dl_{fname}", use_container_width=True)
+    else:
+        st.info("아직 생성된 3D 모델이 없습니다.")
+        
+    st.divider()
+    if st.button("🔄 처음으로 (모드 선택)", use_container_width=True):
+        _ss.mode = None
+        _ss.step = 1
+        st.rerun()
 
-st.title("🧊 Image to 3D Viewer")
-st.write("2D 이미지 또는 영상을 업로드하면 AI가 3D 메쉬(.obj)로 변환합니다.")
-st.divider()
-
-st.subheader("🔀 변환 모드 선택")
-col_a, col_b = st.columns(2)
-
-with col_a:
-    if st.button("🟦 Mode A\n단순 객체 (단일 사진)\nSAM 2 → TRELLIS"):
-        st.cache_resource.clear()
-        gc.collect()
-        if torch.cuda.is_available(): torch.cuda.empty_cache()
-        _ss.mode = "A"
-        _ss.sam2_done = False
-        _ss.trellis_done = False
-        _ss.extracted_image = None
-        _ss.mesh_path = None
-
-with col_b:
-    if st.button("🟧 Mode B\n복잡한 가구 (비디오/GIF/다중 사진)\nSAM 2 Batch → LRM"):
-        st.cache_resource.clear()
-        gc.collect()
-        if torch.cuda.is_available(): torch.cuda.empty_cache()
-        _ss.mode = "B"
-        _ss.modeb_keyframes = []
-        _ss.modeb_segmented_frames = []
-        _ss.modeb_sam2_done = False
-        _ss.modeb_lrm_done = False
-        _ss.mesh_path = None
-
+# =========================================================
+# 4. Mode Selection & Wizard UI
+# =========================================================
 if _ss.mode is None:
-    st.info("👆 분석하고자 하는 물체의 형태에 알맞은 변환 모드를 선택해주세요.")
+    st.header("🔀 변환 모드 선택")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.info("단순한 형태의 객체나 정면 사진 1장만 있을 때 유리합니다.")
+        if st.button("🟦 Mode A\n단일 이미지 복원 (TRELLIS)", use_container_width=True):
+            _ss.mode, _ss.step = "A", 1
+            _ss.sam2_done, _ss.trellis_done = False, False
+            _ss.modea_image, _ss.extracted_image = None, None
+            st.rerun()
+    with col_b:
+        st.success("복잡한 가구나 비대칭 객체의 영상/다중 사진이 있을 때 완벽합니다.")
+        if st.button("🟧 Mode B\n다각도 정밀 복원 (InstantMesh)", use_container_width=True):
+            _ss.mode, _ss.step = "B", 1
+            _ss.modeb_keyframes, _ss.modeb_segmented_frames = [], []
+            _ss.modeb_sam2_done, _ss.modeb_lrm_done = False, False
+            st.rerun()
     st.stop()
 
-st.divider()
+# ----------------- 진행률 바 -----------------
+st.progress(_ss.step / 3.0, text=f"Step {_ss.step} of 3")
 
 # =========================================================
-# 5. Mode A Implementation (Hybrid Rembg + SAM 2)
+# Mode A: TRELLIS Logic
 # =========================================================
 if _ss.mode == "A":
-    st.markdown("### 🟦 Mode A — 단순 객체 단일 이미지 복원 (TRELLIS)")
-    uploaded_file = st.file_uploader("단일 이미지를 업로드하세요.", type=["png", "jpg", "jpeg"], key="modeA_upload")
+    if _ss.step == 1:
+        st.header("Step 1. 단일 이미지 업로드")
+        uploaded_file = st.file_uploader("단일 이미지를 업로드하세요.", type=["png", "jpg", "jpeg"])
+        if uploaded_file:
+            _ss.modea_image = Image.open(uploaded_file)
+            st.image(_ss.modea_image, caption="업로드 원본", use_container_width=True)
+            if st.button("다음 단계로 이동 (배경 제거) ➔", type="primary"):
+                _ss.sam2_done = False
+                _ss.step = 2
+                st.rerun()
 
-    if uploaded_file:
-        if _ss.last_uploaded != uploaded_file.name:
-            _ss.sam2_done = False
-            _ss.trellis_done = False
-            _ss.extracted_image = None
-            _ss.mesh_path = None
-            _ss.last_uploaded = uploaded_file.name
+    elif _ss.step == 2:
+        st.header("Step 2. AI 배경 제거 및 마스크 편집")
+        if not _ss.sam2_done:
+            with st.spinner("Rembg & SAM 2 기반 하이브리드 세그멘테이션 중..."):
+                predictor, device = load_sam2_model()
+                img_rgb = np.array(_ss.modea_image.convert("RGB"))
+                predictor.set_image(img_rgb)
+                h, w, _ = img_rgb.shape
+                
+                rembg_session = new_session("u2net")
+                rembg_mask = remove(img_rgb, session=rembg_session, only_mask=True)
+                contours, _ = cv2.findContours(rembg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    c = max(contours, key=cv2.contourArea)
+                    x, y, bw, bh = cv2.boundingRect(c)
+                    box = np.array([[max(0, x-10), max(0, y-10), min(w, x+bw+10), min(h, y+bh+10)]])
+                else: box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
 
-        image = Image.open(uploaded_file)
-        st.image(image, caption="업로드 원본 이미지", width="stretch")
-        st.divider()
+                masks, _, _ = predictor.predict(box=box, multimask_output=False)
+                mask_2d = masks.squeeze()
+                alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
+                
+                contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    clean_mask = np.zeros_like(alpha_channel)
+                    cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+                    alpha_channel = clean_mask
 
-        st.subheader("Step 2: 배경 제거 및 객체 세그멘테이션 (Hybrid AI)")
-        if st.button("SAM 2 실행", key="modeA_sam2") or _ss.sam2_done:
-            if not _ss.sam2_done:
-                with st.spinner("Rembg & SAM 2 기반 하이브리드 외곽 분석 중..."):
-                    predictor, device = load_sam2_model()
-                    img_rgb = np.array(image.convert("RGB"))
-                    predictor.set_image(img_rgb)
-                    h, w, _ = img_rgb.shape
+                alpha_channel = cv2.erode(alpha_channel, np.ones((5, 5), np.uint8), iterations=3)
+                alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
+
+                img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+                img_rgba[:, :, :3], img_rgba[:, :, 3] = img_rgb, alpha_channel
+                _ss.extracted_image = Image.fromarray(img_rgba, "RGBA")
+                _ss.sam2_done = True
+                del predictor, rembg_session
+                gc.collect()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption("AI 자동 추출 결과")
+            st.image(_ss.extracted_image, use_container_width=True)
+        with col2:
+            st.caption("🖌️ 수동 지우개 (필요시 덧칠해서 지우세요)")
+            try:
+                st_canvas(fill_color="rgba(0,0,0,0)", stroke_width=20, stroke_color="#000", background_image=_ss.extracted_image, height=300, width=300, drawing_mode="freedraw", key="canvas_a")
+            except Exception as e:
+                st.warning("⚠️ 캔버스 모듈 호환성 문제 감지됨 (무시하고 진행 가능합니다)")
+            
+        if st.button("다음 단계로 이동 (3D 생성) ➔", type="primary"):
+            _ss.step = 3
+            st.rerun()
+
+    elif _ss.step == 3:
+        st.header("Step 3. 3D 메쉬 생성 (TRELLIS)")
+        if not _ss.trellis_done:
+            with st.spinner("🔄 TRELLIS: 단일 이미지 다각도 상상 및 3D 공간 복원 중..."):
+                from pipeline.trellis import run_modea_trellis
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
+                os.makedirs(output_dir, exist_ok=True)
+                preset = get_inference_preset()
+                raw_mesh_path = run_modea_trellis(_ss.extracted_image, output_dir, preset["resolution"])
+                
+                with st.spinner("✨ 3D 메쉬 표면 평탄화(Smoothing) 중..."):
+                    import open3d as o3d
+                    mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
+                    mesh = mesh.filter_smooth_taubin(number_of_iterations=20)
+                    mesh.compute_vertex_normals()
+                    o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
                     
-                    rembg_session = new_session("u2net")
-                    rembg_mask = remove(img_rgb, session=rembg_session, only_mask=True)
-                    
-                    contours, _ = cv2.findContours(rembg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        c = max(contours, key=cv2.contourArea)
-                        x, y, bw, bh = cv2.boundingRect(c)
-                        box = np.array([[max(0, x-10), max(0, y-10), min(w, x+bw+10), min(h, y+bh+10)]])
-                    else:
-                        box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
-
-                    masks, _, _ = predictor.predict(
-                        point_coords=None, point_labels=None, box=box, multimask_output=False,
-                    )
-                    mask_2d = masks.squeeze()
-                    alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
-                    
-                    contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        largest_contour = max(contours, key=cv2.contourArea)
-                        clean_mask = np.zeros_like(alpha_channel)
-                        cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
-                        alpha_channel = clean_mask
-
-                    kernel = np.ones((5, 5), np.uint8)
-                    alpha_channel = cv2.erode(alpha_channel, kernel, iterations=3)
-                    alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
-
-                    img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
-                    img_rgba[:, :, :3] = img_rgb
-                    img_rgba[:, :, 3] = alpha_channel
-                    
-                    _ss.extracted_image = Image.fromarray(img_rgba, "RGBA")
-                    _ss.sam2_done = True
-
-            st.success("✅ 세그멘테이션 완료!")
-            st.image(_ss.extracted_image, caption="노이즈 및 테두리가 제거된 객체 마스크", width="stretch")
-            st.divider()
-
-            st.subheader("Step 3: 3D 메쉬 생성 (TRELLIS)")
-            if st.button("TRELLIS 모델 실행", key="modeA_trellis") or _ss.trellis_done:
-                if not _ss.trellis_done:
-                    from pipeline.trellis import run_modea_trellis
-                    base_dir = os.path.dirname(os.path.abspath(__file__))
-                    output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
-                    os.makedirs(output_dir, exist_ok=True)
-                    preset = get_inference_preset()
-                    
-                    with st.spinner("🔄 TRELLIS: 단일 이미지 다각도 상상 및 3D 공간 복원 중..."):
-                        raw_mesh_path = run_modea_trellis(_ss.extracted_image, output_dir, preset["resolution"])
-                    
-                    with st.spinner("✨ 3D 메쉬 표면 평탄화(Smoothing) 작업 중..."):
-                        import open3d as o3d
-                        mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
-                        mesh = mesh.filter_smooth_taubin(number_of_iterations=20)
-                        mesh.compute_vertex_normals()
-                        o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
-                        
-                    _ss.mesh_path = raw_mesh_path
-                    _ss.trellis_done = True
-
-                st.success("✅ 3D 메쉬 생성이 정상 완료되었습니다!")
-                _show_result(_ss.mesh_path)
+                _ss.mesh_path = raw_mesh_path
+                _ss.trellis_done = True
+        st.success("✅ 3D 메쉬 생성이 정상 완료되었습니다!")
+        _show_result(_ss.mesh_path)
 
 # =========================================================
-# 6. Mode B Implementation (Hybrid Rembg + Batch SAM 2)
+# Mode B: InstantMesh Logic
 # =========================================================
 elif _ss.mode == "B":
-    st.markdown("### 🟧 Mode B — 다각도 데이터 기반 정밀 복원 (InstantMesh LRM)")
-    
-    st.subheader("Step 1: 데이터 입력 (비디오, GIF 또는 다중 이미지)")
-    tab1, tab2 = st.tabs(["🎥 동영상 및 GIF 업로드 (자동 추출)", "🖼️ 다중 이미지 직접 업로드"])
-    
-    with tab1:
-        st.info("물체를 360도로 돌려가며 찍은 짧은 영상이나 움직이는 GIF를 업로드하세요.")
-        uploaded_video = st.file_uploader("동영상 또는 GIF 파일 업로드", type=["mp4", "mov", "avi", "gif"])
+    if _ss.step == 1:
+        st.header("Step 1. 다중 데이터 업로드 및 기준 프레임 설정")
+        tab1, tab2 = st.tabs(["🎥 동영상/GIF 업로드", "🖼️ 다중 이미지 업로드"])
         
-        if uploaded_video:
-            num_extract = st.slider("📸 추출할 프레임 수 (많을수록 정면을 찾을 확률이 높아집니다)", min_value=6, max_value=15, value=8, step=1)
-            
-            if st.button("핵심 프레임 추출하기", key="extract_video"):
-                with st.spinner("미디어 분석 및 프레임 추출 중..."):
-                    ext = os.path.splitext(uploaded_video.name)[1].lower()
-                    tfile = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-                    tfile.write(uploaded_video.read())
-                    tfile.flush()
-                    
-                    _ss.modeb_keyframes = extract_smart_keyframes(tfile.name, num_frames=num_extract, target_size=(512, 512))
-                    tfile.close()
-                    os.unlink(tfile.name)
-                    
-                    _ss.modeb_sam2_done = False
-                    _ss.modeb_lrm_done = False
-                st.success(f"✅ 고품질 핵심 프레임 {num_extract}장 추출 완료!")
+        with tab1:
+            uploaded_video = st.file_uploader("동영상 또는 GIF 파일 업로드", type=["mp4", "mov", "avi", "gif"])
+            if uploaded_video:
+                num_extract = st.slider("📸 추출할 프레임 수", 6, 15, 8)
+                if st.button("프레임 추출", type="primary"):
+                    with st.spinner("프레임 추출 중..."):
+                        ext = os.path.splitext(uploaded_video.name)[1].lower()
+                        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                        tfile.write(uploaded_video.read())
+                        tfile.flush()
+                        _ss.modeb_keyframes = extract_smart_keyframes(tfile.name, num_frames=num_extract)
+                        tfile.close()
+                        os.unlink(tfile.name)
+                        _ss.modeb_sam2_done = False
+                    st.rerun()
 
-    with tab2:
-        st.info("객체의 앞, 뒤, 좌, 우 등을 찍은 사진을 4~6장 한꺼번에 업로드하세요.")
-        uploaded_images = st.file_uploader("다중 이미지 업로드", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
-        
-        if uploaded_images and len(uploaded_images) >= 2:
-            if st.button("프레임 적용하기", key="apply_images"):
-                with st.spinner("이미지 최적화 중..."):
+        with tab2:
+            uploaded_images = st.file_uploader("다중 이미지 업로드", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+            if uploaded_images and len(uploaded_images) >= 2:
+                if st.button("프레임 적용", type="primary"):
                     imgs = []
                     for file in uploaded_images[:6]: 
                         img = Image.open(file).convert("RGB")
@@ -384,132 +332,104 @@ elif _ss.mode == "B":
                         imgs.append(img)
                     _ss.modeb_keyframes = imgs
                     _ss.modeb_sam2_done = False
-                    _ss.modeb_lrm_done = False
-                st.success(f"✅ {len(imgs)}장의 핵심 프레임 등록 완료!")
+                    st.rerun()
 
-    if _ss.modeb_keyframes:
-        st.markdown("**[확보된 핵심 프레임]** 💡 **첫 번째 프레임(프레임 1)**이 3D 기준(정면)이 됩니다. 화살표를 눌러 순서를 변경하세요.")
-        cols = st.columns(len(_ss.modeb_keyframes))
-        
-        for idx, img in enumerate(_ss.modeb_keyframes):
-            with cols[idx]:
-                if idx == 0:
-                    st.markdown("<p style='text-align: center; color: #ff4b4b; font-weight: bold; margin-bottom: 5px;'>⭐️ 메인 뷰</p>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<p style='text-align: center; color: gray; margin-bottom: 5px;'>서브 뷰 (참고용)</p>", unsafe_allow_html=True)
-                
-                st.image(img, width="stretch")
-                
-                btn_cols = st.columns(2)
-                with btn_cols[0]:
-                    if st.button("◀", key=f"left_{idx}", disabled=(idx == 0), use_container_width=True):
+        if _ss.modeb_keyframes:
+            st.divider()
+            cols = st.columns(len(_ss.modeb_keyframes))
+            for idx, img in enumerate(_ss.modeb_keyframes):
+                with cols[idx]:
+                    st.markdown(f"<p style='text-align: center; color: {'#ff4b4b' if idx==0 else 'gray'}; font-weight: bold;'>{'⭐️ 메인 뷰' if idx==0 else '서브'}</p>", unsafe_allow_html=True)
+                    st.image(img, use_container_width=True)
+                    b1, b2 = st.columns(2)
+                    if b1.button("◀", key=f"l_{idx}", disabled=(idx == 0)):
                         _ss.modeb_keyframes[idx], _ss.modeb_keyframes[idx-1] = _ss.modeb_keyframes[idx-1], _ss.modeb_keyframes[idx]
-                        
-                        # 🔥 최적화: 메인 뷰가 바뀌었으므로 누끼 작업과 3D 엔진을 모두 초기화합니다.
                         _ss.modeb_sam2_done = False
-                        _ss.modeb_segmented_frames = []
-                        _ss.modeb_lrm_done = False 
                         st.rerun()
-                        
-                with btn_cols[1]:
-                    if st.button("▶", key=f"right_{idx}", disabled=(idx == len(_ss.modeb_keyframes)-1), use_container_width=True):
+                    if b2.button("▶", key=f"r_{idx}", disabled=(idx == len(_ss.modeb_keyframes)-1)):
                         _ss.modeb_keyframes[idx], _ss.modeb_keyframes[idx+1] = _ss.modeb_keyframes[idx+1], _ss.modeb_keyframes[idx]
-                        
                         _ss.modeb_sam2_done = False
-                        _ss.modeb_segmented_frames = []
-                        _ss.modeb_lrm_done = False
                         st.rerun()
-        
-        st.divider()
-        
-        # 🔥 최적화된 Step 2: 오직 '메인 뷰(프레임 1)' 1장만 작업합니다!
-        st.subheader("Step 2: 메인 뷰 집중 세그멘테이션 (초고속 🚀)")
-        if st.button("메인 프레임(1번)만 배경 제거", key="modeb_sam2") or _ss.modeb_sam2_done:
-            if not _ss.modeb_sam2_done:
+            st.divider()
+            if st.button("다음 단계로 이동 (배경 제거) ➔", type="primary"):
+                _ss.step = 2
+                st.rerun()
+
+    elif _ss.step == 2:
+        st.header("Step 2. 메인 뷰 배경 제거 및 편집 (초고속)")
+        if not _ss.modeb_sam2_done:
+            with st.spinner("메인 프레임 1장 집중 세그멘테이션 중..."):
                 predictor, device = load_sam2_model()
                 rembg_session = new_session("u2net")
+                main_frame = _ss.modeb_keyframes[0]
+                img_rgb = np.array(main_frame)
+                predictor.set_image(img_rgb)
+                h, w, _ = img_rgb.shape
                 
-                with st.spinner("메인 프레임 1장 집중 배경 제거 중... (약 0.5초)"):
-                    # 6장 반복문(for)을 과감히 삭제하고 0번째 프레임만 가져옵니다!
-                    main_frame = _ss.modeb_keyframes[0]
-                    img_rgb = np.array(main_frame)
-                    predictor.set_image(img_rgb)
-                    h, w, _ = img_rgb.shape
-                    
-                    rembg_mask = remove(img_rgb, session=rembg_session, only_mask=True)
-                    contours, _ = cv2.findContours(rembg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        c = max(contours, key=cv2.contourArea)
-                        x, y, bw, bh = cv2.boundingRect(c)
-                        box = np.array([[max(0, x-10), max(0, y-10), min(w, x+bw+10), min(h, y+bh+10)]])
-                    else:
-                        box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
-                    
-                    masks, _, _ = predictor.predict(
-                        point_coords=None, point_labels=None, box=box, multimask_output=False,
-                    )
-                    mask_2d = masks.squeeze()
-                    alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
-                    
-                    contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        largest_contour = max(contours, key=cv2.contourArea)
-                        clean_mask = np.zeros_like(alpha_channel)
-                        cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
-                        alpha_channel = clean_mask
-                        
-                    kernel = np.ones((5, 5), np.uint8)
-                    alpha_channel = cv2.erode(alpha_channel, kernel, iterations=3)
-                    alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
-                    
-                    img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
-                    img_rgba[:, :, :3] = img_rgb
-                    img_rgba[:, :, 3] = alpha_channel
-                    
-                    # 결과를 단 1장만 리스트에 담아 3D 엔진으로 넘깁니다.
-                    _ss.modeb_segmented_frames = [Image.fromarray(img_rgba, "RGBA")]
-                    _ss.modeb_sam2_done = True
+                rembg_mask = remove(img_rgb, session=rembg_session, only_mask=True)
+                contours, _ = cv2.findContours(rembg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    c = max(contours, key=cv2.contourArea)
+                    x, y, bw, bh = cv2.boundingRect(c)
+                    box = np.array([[max(0, x-10), max(0, y-10), min(w, x+bw+10), min(h, y+bh+10)]])
+                else: box = np.array([[int(w*0.1), int(h*0.1), int(w*0.9), int(h*0.9)]])
                 
-                del predictor
-                del rembg_session
+                masks, _, _ = predictor.predict(box=box, multimask_output=False)
+                mask_2d = masks.squeeze()
+                alpha_channel = (mask_2d > 0).astype(np.uint8) * 255
+                
+                contours, _ = cv2.findContours(alpha_channel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    clean_mask = np.zeros_like(alpha_channel)
+                    cv2.drawContours(clean_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+                    alpha_channel = clean_mask
+                    
+                alpha_channel = cv2.erode(alpha_channel, np.ones((5, 5), np.uint8), iterations=3)
+                alpha_channel = cv2.GaussianBlur(alpha_channel, (5, 5), 0)
+                
+                img_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+                img_rgba[:, :, :3], img_rgba[:, :, 3] = img_rgb, alpha_channel
+                
+                _ss.modeb_segmented_frames = [Image.fromarray(img_rgba, "RGBA")]
+                _ss.modeb_sam2_done = True
+                del predictor, rembg_session
                 gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
 
-            st.success("✅ 메인 뷰 누끼 추출 완료! (불필요한 연산 대폭 절감)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption("AI 자동 추출 결과")
+            # 🔥 (수정 완료) width="stretch" 로 변경
+            st.image(_ss.modeb_segmented_frames[0], width="stretch")
+        with col2:
+            st.caption("🖌️ 수동 지우개 (필요시 덧칠해서 지우세요)")
+            try:
+                st_canvas(fill_color="rgba(0,0,0,0)", stroke_width=20, stroke_color="#000", background_image=_ss.modeb_segmented_frames[0], height=300, width=300, drawing_mode="freedraw", key="canvas_b")
+            except Exception as e:
+                st.warning("⚠️ 캔버스 모듈 호환성 문제 감지됨 (무시하고 진행 가능합니다)")
             
-            # UI에서도 완성된 1장만 예쁘게 중앙에 띄워줍니다.
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.image(_ss.modeb_segmented_frames[0], width="stretch", caption="3D 복원 기준이 될 투명 메인 뷰")
-            
-            st.divider()
-            
-            st.subheader("Step 3: 다각도 3D 복원 (InstantMesh LRM)")
-            if st.button("LRM 3D 엔진 구동", key="modeb_lrm") or _ss.modeb_lrm_done:
-                if not _ss.modeb_lrm_done:
-                    with st.spinner("🚀 InstantMesh 다각도 3D 복원 엔진 가동 중... (VRAM 집중 구간)"):
-                        try:
-                            from pipeline.instantmesh import run_modeb_instantmesh
-                        except ModuleNotFoundError:
-                            st.error("🚨 잠시만요! 아직 `pipeline/instantmesh.py` 파일을 만들지 않았습니다. 백엔드 AI 엔진 코드를 먼저 추가해야 합니다.")
-                            st.stop()
-                            
-                        base_dir = os.path.dirname(os.path.abspath(__file__))
-                        output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
-                        os.makedirs(output_dir, exist_ok=True)
-                        
-                        raw_mesh_path = run_modeb_instantmesh(_ss.modeb_segmented_frames, output_dir)
-                        
-                        with st.spinner("✨ 3D 메쉬 표면 정밀 평탄화 작업 중..."):
-                            import open3d as o3d
-                            mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
-                            mesh = mesh.filter_smooth_taubin(number_of_iterations=3) # 다림질 횟수는 적게, 디테일 최대한 살리는 방향으로
-                            mesh.compute_vertex_normals()
-                            o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
-                            
-                        _ss.mesh_path = raw_mesh_path
-                        _ss.modeb_lrm_done = True
+        if st.button("다음 단계로 이동 (3D 생성) ➔", type="primary"):
+            _ss.step = 3
+            st.rerun()
 
-                st.success("✅ InstantMesh 다각도 3D 복원 완료!")
-                _show_result(_ss.mesh_path)
+    elif _ss.step == 3:
+        st.header("Step 3. 다각도 3D 복원 (InstantMesh LRM)")
+        if not _ss.modeb_lrm_done:
+            with st.spinner("🚀 InstantMesh 다각도 3D 복원 엔진 가동 중..."):
+                from pipeline.instantmesh import run_modeb_instantmesh
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                output_dir = os.path.normpath(os.path.join(base_dir, "outputs", "meshes"))
+                raw_mesh_path = run_modeb_instantmesh(_ss.modeb_segmented_frames, output_dir)
+                
+                with st.spinner("✨ 3D 메쉬 표면 정밀 평탄화 작업 중..."):
+                    import open3d as o3d
+                    mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
+                    mesh = mesh.filter_smooth_taubin(number_of_iterations=3)
+                    mesh.compute_vertex_normals()
+                    o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
+                    
+                _ss.mesh_path = raw_mesh_path
+                _ss.modeb_lrm_done = True
+                
+        st.success("✅ 3D 메쉬 생성 완료!")
+        _show_result(_ss.mesh_path)
