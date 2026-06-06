@@ -13,13 +13,6 @@ import cv2
 import tempfile
 import glob
 
-# 인터랙티브 마스크 편집기
-try:
-    from streamlit_drawable_canvas import st_canvas
-except ImportError:
-    st.error("🚨 캔버스 기능이 필요합니다. 터미널에서 `pip install streamlit-drawable-canvas`를 실행해주세요.")
-    st.stop()
-
 # Rembg & SAM 2 Libraries
 from rembg import remove, new_session
 from sam2.build_sam import build_sam2
@@ -142,7 +135,7 @@ def _show_result(obj_path: str):
     with col1:
         st.caption(f"저장 경로: `{obj_path}`")
         with open(obj_path, "rb") as f:
-            st.download_button("⬇️ .obj 메쉬 파일 다운로드", data=f.read(), file_name=os.path.basename(obj_path), mime="model/obj", use_container_width=True)
+            st.download_button("⬇️ .obj 메쉬 파일 다운로드", data=f.read(), file_name=os.path.basename(obj_path), mime="model/obj")
     with col2:
         safe_path = urllib.parse.quote(obj_path.replace(os.sep, '/'))
         st.markdown(f'<a href="http://localhost:8502/?obj={safe_path}" target="_blank"><button style="background:#22aa66;color:white;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;width:100%;height:42px;">🏠 단일 뷰어 / 다중 쇼룸 열기 (새 탭)</button></a>', unsafe_allow_html=True)
@@ -170,12 +163,12 @@ with st.sidebar:
             fname = os.path.basename(f)
             with st.expander(f"📦 {fname[:15]}..."):
                 with open(f, "rb") as file_data:
-                    st.download_button("⬇️ 다운로드", data=file_data, file_name=fname, key=f"dl_{fname}", use_container_width=True)
+                    st.download_button("⬇️ 다운로드", data=file_data, file_name=fname, key=f"dl_{fname}")
     else:
         st.info("아직 생성된 3D 모델이 없습니다.")
         
     st.divider()
-    if st.button("🔄 처음으로 (모드 선택)", use_container_width=True):
+    if st.button("🔄 처음으로 (모드 선택)"):
         _ss.mode = None
         _ss.step = 1
         st.rerun()
@@ -188,14 +181,14 @@ if _ss.mode is None:
     col_a, col_b = st.columns(2)
     with col_a:
         st.info("단순한 형태의 객체나 정면 사진 1장만 있을 때 유리합니다.")
-        if st.button("🟦 Mode A\n단일 이미지 복원 (TRELLIS)", use_container_width=True):
+        if st.button("🟦 Mode A\n단일 이미지 복원 (TRELLIS)"):
             _ss.mode, _ss.step = "A", 1
             _ss.sam2_done, _ss.trellis_done = False, False
             _ss.modea_image, _ss.extracted_image = None, None
             st.rerun()
     with col_b:
         st.success("복잡한 가구나 비대칭 객체의 영상/다중 사진이 있을 때 완벽합니다.")
-        if st.button("🟧 Mode B\n다각도 정밀 복원 (InstantMesh)", use_container_width=True):
+        if st.button("🟧 Mode B\n다각도 정밀 복원 (InstantMesh)"):
             _ss.mode, _ss.step = "B", 1
             _ss.modeb_keyframes, _ss.modeb_segmented_frames = [], []
             _ss.modeb_sam2_done, _ss.modeb_lrm_done = False, False
@@ -214,14 +207,14 @@ if _ss.mode == "A":
         uploaded_file = st.file_uploader("단일 이미지를 업로드하세요.", type=["png", "jpg", "jpeg"])
         if uploaded_file:
             _ss.modea_image = Image.open(uploaded_file)
-            st.image(_ss.modea_image, caption="업로드 원본", use_container_width=True)
+            st.image(_ss.modea_image, caption="업로드 원본")
             if st.button("다음 단계로 이동 (배경 제거) ➔", type="primary"):
                 _ss.sam2_done = False
                 _ss.step = 2
                 st.rerun()
 
     elif _ss.step == 2:
-        st.header("Step 2. AI 배경 제거 및 마스크 편집")
+        st.header("Step 2. AI 배경 제거")
         if not _ss.sam2_done:
             with st.spinner("Rembg & SAM 2 기반 하이브리드 세그멘테이션 중..."):
                 predictor, device = load_sam2_model()
@@ -259,16 +252,11 @@ if _ss.mode == "A":
                 del predictor, rembg_session
                 gc.collect()
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.caption("AI 자동 추출 결과")
-            st.image(_ss.extracted_image, use_container_width=True)
+        # 🔥 기존 방식으로 복구: 캔버스 없애고 중앙에 깔끔하게 배치
+        st.success("✅ 세그멘테이션 완료!")
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.caption("🖌️ 수동 지우개 (필요시 덧칠해서 지우세요)")
-            try:
-                st_canvas(fill_color="rgba(0,0,0,0)", stroke_width=20, stroke_color="#000", background_image=_ss.extracted_image, height=300, width=300, drawing_mode="freedraw", key="canvas_a")
-            except Exception as e:
-                st.warning("⚠️ 캔버스 모듈 호환성 문제 감지됨 (무시하고 진행 가능합니다)")
+            st.image(_ss.extracted_image, caption="노이즈 및 테두리가 제거된 객체 마스크")
             
         if st.button("다음 단계로 이동 (3D 생성) ➔", type="primary"):
             _ss.step = 3
@@ -340,7 +328,7 @@ elif _ss.mode == "B":
             for idx, img in enumerate(_ss.modeb_keyframes):
                 with cols[idx]:
                     st.markdown(f"<p style='text-align: center; color: {'#ff4b4b' if idx==0 else 'gray'}; font-weight: bold;'>{'⭐️ 메인 뷰' if idx==0 else '서브'}</p>", unsafe_allow_html=True)
-                    st.image(img, use_container_width=True)
+                    st.image(img)
                     b1, b2 = st.columns(2)
                     if b1.button("◀", key=f"l_{idx}", disabled=(idx == 0)):
                         _ss.modeb_keyframes[idx], _ss.modeb_keyframes[idx-1] = _ss.modeb_keyframes[idx-1], _ss.modeb_keyframes[idx]
@@ -356,7 +344,7 @@ elif _ss.mode == "B":
                 st.rerun()
 
     elif _ss.step == 2:
-        st.header("Step 2. 메인 뷰 배경 제거 및 편집 (초고속)")
+        st.header("Step 2. 메인 뷰 배경 제거 (초고속)")
         if not _ss.modeb_sam2_done:
             with st.spinner("메인 프레임 1장 집중 세그멘테이션 중..."):
                 predictor, device = load_sam2_model()
@@ -396,17 +384,11 @@ elif _ss.mode == "B":
                 del predictor, rembg_session
                 gc.collect()
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.caption("AI 자동 추출 결과")
-            # 🔥 (수정 완료) width="stretch" 로 변경
-            st.image(_ss.modeb_segmented_frames[0], width="stretch")
+        # 🔥 기존 방식으로 복구: 캔버스 없애고 중앙에 깔끔하게 배치
+        st.success("✅ 메인 뷰 누끼 추출 완료!")
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.caption("🖌️ 수동 지우개 (필요시 덧칠해서 지우세요)")
-            try:
-                st_canvas(fill_color="rgba(0,0,0,0)", stroke_width=20, stroke_color="#000", background_image=_ss.modeb_segmented_frames[0], height=300, width=300, drawing_mode="freedraw", key="canvas_b")
-            except Exception as e:
-                st.warning("⚠️ 캔버스 모듈 호환성 문제 감지됨 (무시하고 진행 가능합니다)")
+            st.image(_ss.modeb_segmented_frames[0], caption="3D 복원 기준이 될 투명 메인 뷰")
             
         if st.button("다음 단계로 이동 (3D 생성) ➔", type="primary"):
             _ss.step = 3

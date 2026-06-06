@@ -14,13 +14,12 @@
 # ============================================================================
 
 # --- Base UI & Utils ---
-# 🔥 캔버스(streamlit-drawable-canvas) 호환성을 위해 1.35.0 버전으로 강제 고정합니다.
-streamlit==1.35.0
+# 💡 캔버스가 제거되었으므로 항상 최신 스트림릿을 안정적으로 사용할 수 있습니다.
+streamlit
 opencv-python
 numpy
 Pillow
 psutil
-streamlit-drawable-canvas
 
 # --- AI Core & PyTorch ---
 torch
