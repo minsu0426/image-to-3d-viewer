@@ -39,7 +39,7 @@ SAM 2(Segment Anything 2), TRELLIS, InstantMesh 등 최신 AI 파운데이션 �
 ### 🔹 1-3. 인터랙티브 가상 쇼룸 (Three.js WebGL Rendering)
 
 - **Tech:** `Three.js`, `OrbitControls`, `TransformControls`, `HDRI (RoomEnvironment)`
-- **Feature:** 생성된 3D 객체를 `Port 8502` 기반의 가상 공간에 즉시 렌더링합니다. 사용자는 W/E/R 키를 통해 객체의 위치, 크기, 회전을 직관적으로 제어할 수 있으며, 가죽/금속성(Roughness, Metalness) 및 실시간 조명(Exposure) 조절과 시네마틱 턴테이블 기능을 제공합니다.
+- **Feature:** 생성된 3D 객체를 `Port 8502` 기반의 가상 공간에 즉시 렌더링합니다. 사용자는 W/E/R 키를 통해 객체의 위치, 크기, 회전, 색상을 직관적으로 제어할 수 있으며, 가죽/금속성(Roughness, Metalness) 및 실시간 조명(Exposure) 조절과 시네마틱 턴테이블 기능을 제공합니다.
 <img src="running_imgs/single-viewer-chair.png" width="800" alt="Single Viewer Preview">
 
 <img src="running_imgs/showroom1.png" width="800" alt="Showroom Preview">
@@ -192,3 +192,21 @@ A: `pipeline/instantmesh_core` 폴더가 정상적으로 Clone 되었는지 확�
 
 - **문제점:** Mode B에서 GIF/비디오를 분석할 때, 추출된 메인 프레임(Frame 1)이 '완벽한 정면'이 아닌 '측면'일 경우, AI가 측면의 형태를 객체의 정면으로 오인하여 양쪽으로 대칭 복사(데칼코마니 현상, ex. 신발 코가 하트 모양으로 갈라짐)하는 할루시네이션이 발생합니다.
 - **해결 방향:** 현재는 UI 상에서 사용자가 직접 최적의 프레임을 스왑(Swap)하도록 유도하여 방어하고 있으나, 향후 CLIP 또는 DINOv2와 같은 비전 모델을 도입하여 가장 정면에 가까운 프레임을 AI가 스스로 판단하여 1번 프레임으로 배치하는 'Auto-Pose Detection' 알고리즘을 개발할 계획입니다.
+
+---
+
+## 📚 참고 문헌 및 오픈소스 활용 (Acknowledgements & References)
+
+본 프로젝트는 다음의 오픈소스 모델과 라이브러리를 참고 및 활용하여 개발되었습니다.
+
+### 1. AI 파운데이션 모델
+- **InstantMesh (3D Reconstruction):** https://github.com/TencentARC/InstantMesh
+- **SAM 2 (Segmentation):** https://github.com/facebookresearch/sam2
+- **TRELLIS (3D Generative Model):** https://github.com/microsoft/TRELLIS
+- **DINOv2 (Vision Backbone):** https://github.com/facebookresearch/dinov2
+
+### 2. 주요 활용 라이브러리
+- **Streamlit:** 웹 인터페이스 구축
+- **Three.js:** 3D 가상 쇼룸 렌더링 엔진
+- **Open3D:** 3D 메쉬 표면 평탄화 및 폴리곤 압축(Decimation) 처리
+- **Rembg (U2Net):** 객체 배경 제거
