@@ -5,6 +5,7 @@ from PIL import Image
 import time
 import torch
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import urllib.request
 import urllib.parse
 import psutil
@@ -73,9 +74,9 @@ def get_inference_preset():
     if avail < 2.5: return {"resolution": 128, "tier": "Minimal"}
     elif avail < 6: return {"resolution": 192, "tier": "Low"}
     elif avail < 14: return {"resolution": 256, "tier": "Medium"}
-    else: return {"resolution": 512, "tier": "High"}
+    else: return {"resolution": 256, "tier": "High"}
 
-def extract_smart_keyframes(file_path, num_frames=8, target_size=(512, 512)):
+def extract_smart_keyframes(file_path, num_frames=8, target_size=(256, 256)):
     extracted_images = []
     if file_path.lower().endswith('.gif'):
         gif = Image.open(file_path)
@@ -251,6 +252,8 @@ if _ss.mode == "A":
                 _ss.sam2_done = True
                 del predictor, rembg_session
                 gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         # 🔥 기존 방식으로 복구: 캔버스 없애고 중앙에 깔끔하게 배치
         st.success("✅ 세그멘테이션 완료!")
@@ -310,8 +313,8 @@ elif _ss.mode == "B":
                     st.rerun()
 
         with tab2:
-            uploaded_images = st.file_uploader("다중 이미지 업로드", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
-            if uploaded_images and len(uploaded_images) >= 2:
+            uploaded_images = st.file_uploader("다중 이미지 업로드 (1장만 올려도 무방합니다)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+            if uploaded_images and len(uploaded_images) >= 1: # 👈 1장만 올려도 바로 통과되도록 수정!
                 if st.button("프레임 적용", type="primary"):
                     imgs = []
                     for file in uploaded_images[:6]: 
