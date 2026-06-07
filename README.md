@@ -8,7 +8,7 @@ SAM 2(Segment Anything 2), TRELLIS, InstantMesh 등 최신 AI 파운데이션 �
 
 ## 🌟 1. 핵심 기능 및 기술 스택
 
-### 🔹 1-1. 정밀 객체 세그멘테이션 (Hybrid AI Segmentation)
+### 🔹 1-1. 정밀 객체 세그멘테이션
 
 - **Tech:** `Rembg (U2Net)` + `SAM 2 (Segment Anything 2)` + `OpenCV`
 - **Feature:** Rembg로 1차 Bounding Box를 추출하고, SAM 2 알고리즘으로 픽셀 단위의 정밀한 마스크를 생성합니다. 이후 OpenCV의 침식(Erosion) 및 블러(Blur) 연산을 통해 테두리 노이즈를 완벽하게 제거하여 고품질 RGBA 이미지를 추출합니다.
@@ -23,7 +23,7 @@ SAM 2(Segment Anything 2), TRELLIS, InstantMesh 등 최신 AI 파운데이션 �
 <img src="running_imgs/modelB-step2.png" width="800" alt="Segmentation Preview">
 
 
-### 🔹 1-2. 고품질 3D 메쉬 복원 엔진 (Generative & Reconstructive 3D)
+### 🔹 1-2. 고품질 3D 메쉬 복원 엔진
 
 - **Model A (단일 이미지):** `TRELLIS` 엔진을 사용하여 단 한 장의 사진만으로 보이지 않는 뒷면까지 다각도로 상상(Hallucination)하여 3D 메쉬를 생성합니다.
 <img src="running_imgs/modelA-step3.png" width="800" alt="ModelA Preview">
@@ -102,7 +102,7 @@ SAM 2(Segment Anything 2), TRELLIS, InstantMesh 등 최신 AI 파운데이션 �
 
 본 프로젝트는 고성능 3D 렌더링 연산을 위해 NVIDIA GPU (CUDA) 및 Python 3.10 환경이 필수적으로 요구됩니다. 컴파일러 충돌 방지를 위해 아래 가이드를 엄격히 따라주세요.
 
-### 📋 4-1. 사전 준비 (Prerequisites)
+### 📋 4-1. 사전 준비
 
 - Python 3.10.x (3.11 이상은 3D 컴파일러 연동 불가)
 - NVIDIA CUDA Toolkit 12.1 (Visual Studio Integration 체크 해제)
@@ -125,7 +125,7 @@ pip install torch torchvision numpy wheel setuptools
 # 4. 전체 의존성 설치 (requirements.txt)
 pip install -r requirements.txt --no-build-isolation
 ```
-### ⚙️ 4-3. 사전 학습 AI 모델(Weights) 다운로드 및 최적화
+### ⚙️ 4-3. 사전 학습 AI 모델 다운로드 및 최적화
 이 프로젝트는 무거운 딥러닝 모델들을 수동으로 다운로드할 필요가 없습니다.
 
 - 자동 캐싱: 앱을 최초 실행하면 SAM 2(sam2.1_hiera_small.pt) 및 TRELLIS, InstantMesh 모델의 가중치를 메타(Meta)와 HuggingFace 서버에서 자동으로 다운로드하여 로컬에 캐싱합니다.
@@ -195,7 +195,7 @@ A: `pipeline/instantmesh_core` 폴더가 정상적으로 Clone 되었는지 확�
 
 ---
 
-## 📚 참고 문헌 및 오픈소스 활용 (Acknowledgements & References)
+## 📚 참고 문헌 및 오픈소스 활용
 
 본 프로젝트는 다음의 오픈소스 모델과 라이브러리를 참고 및 활용하여 개발되었습니다.
 
