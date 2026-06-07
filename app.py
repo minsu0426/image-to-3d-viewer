@@ -280,6 +280,9 @@ if _ss.mode == "A":
                     import open3d as o3d
                     mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
                     mesh = mesh.filter_smooth_taubin(number_of_iterations=20)
+                    target_triangles = max(len(mesh.triangles) // 4, 10000) # 폴리곤 갯수를 1/4로 줄임
+                    mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
+
                     mesh.compute_vertex_normals()
                     o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
                     
@@ -410,6 +413,9 @@ elif _ss.mode == "B":
                     import open3d as o3d
                     mesh = o3d.io.read_triangle_mesh(raw_mesh_path)
                     mesh = mesh.filter_smooth_taubin(number_of_iterations=3)
+                    target_triangles = max(len(mesh.triangles) // 4, 10000) # 폴리곤 갯수를 1/4로 줄임
+                    mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
+
                     mesh.compute_vertex_normals()
                     o3d.io.write_triangle_mesh(raw_mesh_path, mesh)
                     

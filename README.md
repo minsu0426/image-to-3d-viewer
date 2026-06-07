@@ -12,17 +12,45 @@ SAM 2(Segment Anything 2), TRELLIS, InstantMesh 등 최신 AI 파운데이션 �
 
 - **Tech:** `Rembg (U2Net)` + `SAM 2 (Segment Anything 2)` + `OpenCV`
 - **Feature:** Rembg로 1차 Bounding Box를 추출하고, SAM 2 알고리즘으로 픽셀 단위의 정밀한 마스크를 생성합니다. 이후 OpenCV의 침식(Erosion) 및 블러(Blur) 연산을 통해 테두리 노이즈를 완벽하게 제거하여 고품질 RGBA 이미지를 추출합니다.
+<img src="running_imgs/modelA-step1.png" width="800" alt="Segmentation Preview">
+
+<img src="running_imgs/modelA-step1-cube.png" width="800" alt="Segmentation Preview">
+
+<img src="running_imgs/modelA-step2.png" width="800" alt="Segmentation Preview">
+
+<img src="running_imgs/modelB-step1.png" width="800" alt="Segmentation Preview">
+
+<img src="running_imgs/modelB-step2.png" width="800" alt="Segmentation Preview">
+
 
 ### 🔹 1-2. 고품질 3D 메쉬 복원 엔진 (Generative & Reconstructive 3D)
 
-- **Mode A (단일 이미지):** `TRELLIS` 엔진을 사용하여 단 한 장의 사진만으로 보이지 않는 뒷면까지 다각도로 상상(Hallucination)하여 3D 메쉬를 생성합니다.
-- **Mode B (비디오/GIF/다중 이미지):** `InstantMesh LRM` 기반으로 동작합니다. 업로드된 미디어에서 Laplacian Variance(선명도) 기반으로 최적의 프레임을 자동 추출하고, 다각도 데이터를 분석해 왜곡 없는 정교한 3D 구조를 복원합니다.
+- **Model A (단일 이미지):** `TRELLIS` 엔진을 사용하여 단 한 장의 사진만으로 보이지 않는 뒷면까지 다각도로 상상(Hallucination)하여 3D 메쉬를 생성합니다.
+<img src="running_imgs/modelA-step3.png" width="800" alt="ModelA Preview">
+
+<img src="running_imgs/modelA-step3-cube.png" width="800" alt="ModelA Preview">
+
+
+- **Model B (비디오/GIF/다중 이미지):** `InstantMesh LRM` 기반으로 동작합니다. 업로드된 미디어에서 Laplacian Variance(선명도) 기반으로 최적의 프레임을 자동 추출하고, 다각도 데이터를 분석해 왜곡 없는 정교한 3D 구조를 복원합니다.
+<img src="running_imgs/modelB-step3.png" width="800" alt="ModelB Preview">
+
 - **Surface Optimization:** Open3D의 `Taubin Smoothing` 알고리즘을 적용하여 디테일(재봉선, 질감 등)은 보존하면서 3D 스캔 특유의 노이즈만 효과적으로 평탄화합니다.
 
 ### 🔹 1-3. 인터랙티브 가상 쇼룸 (Three.js WebGL Rendering)
 
 - **Tech:** `Three.js`, `OrbitControls`, `TransformControls`, `HDRI (RoomEnvironment)`
 - **Feature:** 생성된 3D 객체를 `Port 8502` 기반의 가상 공간에 즉시 렌더링합니다. 사용자는 W/E/R 키를 통해 객체의 위치, 크기, 회전을 직관적으로 제어할 수 있으며, 가죽/금속성(Roughness, Metalness) 및 실시간 조명(Exposure) 조절과 시네마틱 턴테이블 기능을 제공합니다.
+<img src="running_imgs/single-viewer-chair.png" width="800" alt="Single Viewer Preview">
+
+<img src="running_imgs/showroom1.png" width="800" alt="Showroom Preview">
+
+<img src="running_imgs/showroom2.png" width="800" alt="Showroom Preview">
+
+<img src="running_imgs/showroom3.png" width="800" alt="Showroom Preview">
+
+<img src="running_imgs/showroom4.png" width="800" alt="Showroom Preview">
+
+<img src="running_imgs/showroom5.png" width="800" alt="Showroom Preview">
 
 ---
 
@@ -83,21 +111,26 @@ SAM 2(Segment Anything 2), TRELLIS, InstantMesh 등 최신 AI 파운데이션 �
 ### ⚙️ 4-2. 환경 세팅 및 패키지 설치
 
 ```bash
-# 1. 가상환경 생성 및 활성화
+# 1. 독립된 가상환경 생성 및 활성화
 python -m venv venv
 venv\Scripts\activate
 
 # 2. InstantMesh 코어 엔진 다운로드 (필수)
-git clone https://github.com/TencentARC/InstantMesh.git pipeline/instantmesh_core
+git clone [https://github.com/TencentARC/InstantMesh.git](https://github.com/TencentARC/InstantMesh.git) pipeline/instantmesh_core
 
 # 3. Pip 업그레이드 및 필수 코어 설치
 python -m pip install --upgrade pip
 pip install torch torchvision numpy wheel setuptools
 
-# 4. 전체 의존성 설치
+# 4. 전체 의존성 설치 (requirements.txt)
 pip install -r requirements.txt --no-build-isolation
 ```
+### ⚙️ 4-3. 사전 학습 AI 모델(Weights) 다운로드 및 최적화
+이 프로젝트는 무거운 딥러닝 모델들을 수동으로 다운로드할 필요가 없습니다.
 
+- 자동 캐싱: 앱을 최초 실행하면 SAM 2(sam2.1_hiera_small.pt) 및 TRELLIS, InstantMesh 모델의 가중치를 메타(Meta)와 HuggingFace 서버에서 자동으로 다운로드하여 로컬에 캐싱합니다.
+
+- 메모리 파편화 방지: 윈도우 환경 특유의 VRAM 데드락(Deadlock)을 방지하기 위해 app.py 구동 시 코어 레벨에서 PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" 환경 변수가 자동으로 주입되어 최적화된 메모리 관리를 수행합니다.
 ---
 
 ## 🚀 5. 사용 방법
@@ -149,6 +182,10 @@ A: `pipeline/instantmesh_core` 폴더가 정상적으로 Clone 되었는지 확�
 현재 Mode A에서 사용되는 생성형 3D AI(TRELLIS)는 '현실 세계의 물리적 객체(가구, 신발, 식기 등)'에 대한 학습 데이터를 기반으로 깊이(Depth)와 후면을 유추합니다.
 
 - **문제점 (The Cartoon/2D Illustration Issue):** 피카츄와 같은 2D 애니메이션 캐릭터나 일러스트, 비현실적이고 극단적인 비대칭 구조를 가진 이미지를 입력할 경우, AI가 입체적인 부피감을 올바르게 상상하지 못합니다. 이로 인해 메쉬(Mesh)가 납작하게 눌리거나(Flat-distortion), 텍스처가 기괴하게 붕괴하는 현상이 발생합니다.
+<img src="running_imgs/Problem1.png" width="800" alt="Model A Problem Preview">
+
+<img src="running_imgs/Problem2.png" width="800" alt="Model A Problem Preview">
+
 - **해결 방향:** 비현실적인 캐릭터나 2D 일러스트 전용으로 파인튜닝(Fine-tuning)된 LRM(Large Reconstruction Model) 모델을 파이프라인에 추가 연동하거나, 다중 프레임(Mode B)을 사용하여 입체적 단서를 강제로 제공하는 방식으로 개선할 예정입니다.
 
 ### 🛑 7-2. 측면(Side-view) 단일 프레임 의존성에 의한 할루시네이션(Hallucination)
