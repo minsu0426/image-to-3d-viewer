@@ -124,6 +124,10 @@ pip install torch torchvision numpy wheel setuptools
 
 # 4. 전체 의존성 설치 (requirements.txt)
 pip install -r requirements.txt --no-build-isolation
+
+# 5. 3D 필수 엔진(Kaolin/Diso) 자동 설치
+# (윈도우 환경에서 설치 오류를 방지하기 위해 제공된 스크립트를 실행합니다)
+python install_kaolin.py
 ```
 ### ⚙️ 4-3. 사전 학습 AI 모델 다운로드 및 최적화
 이 프로젝트는 무거운 딥러닝 모델들을 수동으로 다운로드할 필요가 없습니다.
